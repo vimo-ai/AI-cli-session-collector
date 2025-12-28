@@ -45,6 +45,27 @@ impl ClaudeAdapter {
             .to_string()
     }
 
+    /// 从 JSONL 文件快速读取 cwd（只读前几行）
+    fn read_cwd_from_jsonl(file_path: &Path) -> Option<String> {
+        let file = File::open(file_path).ok()?;
+        let reader = BufReader::new(file);
+
+        // 只读取前 10 行寻找 cwd
+        for line in reader.lines().take(10) {
+            if let Ok(line) = line {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                if let Ok(entry) = serde_json::from_str::<JsonlEntry>(&line) {
+                    if let Some(cwd) = entry.cwd {
+                        return Some(cwd);
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// 解析单个 JSONL 文件
     fn parse_jsonl_file(
         &self,
@@ -281,9 +302,8 @@ impl ConversationAdapter for ClaudeAdapter {
                 continue;
             }
 
-            // 解码项目路径
+            // 解码项目路径（作为 fallback，当 JSONL 中无 cwd 时使用）
             let decoded_path = Self::decode_path(encoded_name);
-            let project_name = Self::extract_project_name(&decoded_path);
 
             // 扫描 JSONL 文件
             for file_entry in fs::read_dir(&project_dir)? {
@@ -321,17 +341,24 @@ impl ConversationAdapter for ClaudeAdapter {
                     Err(_) => (None, None),
                 };
 
+                // 从 JSONL 文件读取真实的 cwd（解决非 ASCII 路径问题）
+                let cwd = Self::read_cwd_from_jsonl(&file_path);
+
+                // 优先使用 cwd，否则回退到 decode_path 结果
+                let actual_project_path = cwd.clone().unwrap_or_else(|| decoded_path.clone());
+                let actual_project_name = Self::extract_project_name(&actual_project_path);
+
                 results.push(SessionMeta {
                     id: session_id.to_string(),
                     source: Source::Claude,
                     channel: Some("code".to_string()),
-                    project_path: decoded_path.clone(),
-                    project_name: Some(project_name.clone()),
+                    project_path: actual_project_path,
+                    project_name: Some(actual_project_name),
                     encoded_dir_name: Some(encoded_name.to_string()),
                     session_path: Some(file_path.to_string_lossy().to_string()),
                     file_mtime,
                     file_size,
-                    cwd: None,
+                    cwd,
                     model: None,
                     meta: None,
                     created_at: None,

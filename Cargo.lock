@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "ai-session-core"
+name = "ai-cli-session-collector"
 version = "0.1.0"
 dependencies = [
  "anyhow",
