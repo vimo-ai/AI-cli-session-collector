@@ -110,3 +110,32 @@ pub struct ParseResult {
     pub model: Option<String>,
     pub meta: Option<serde_json::Value>,
 }
+
+/// 可索引的会话数据（用于写入数据库）
+/// 包含正确解析的项目路径（从 cwd 读取，解决中文路径问题）
+#[derive(Debug, Clone, Serialize)]
+pub struct IndexableSession {
+    /// 会话 ID
+    pub session_id: String,
+    /// 项目真实路径（从 JSONL 的 cwd 字段读取）
+    pub project_path: String,
+    /// 项目名称
+    pub project_name: String,
+    /// 消息列表
+    pub messages: Vec<IndexableMessage>,
+}
+
+/// 可索引的消息
+#[derive(Debug, Clone, Serialize)]
+pub struct IndexableMessage {
+    /// 消息 UUID
+    pub uuid: String,
+    /// 角色 (user/assistant)
+    pub role: String,
+    /// 消息内容
+    pub content: String,
+    /// 时间戳 (毫秒)
+    pub timestamp: i64,
+    /// 序号
+    pub sequence: i64,
+}

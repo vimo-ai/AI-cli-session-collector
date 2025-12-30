@@ -9,7 +9,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use super::ConversationAdapter;
-use crate::domain::{MessageType, ParseResult, ParsedMessage, SessionMeta, Source};
+use crate::domain::{IndexableMessage, IndexableSession, MessageType, ParseResult, ParsedMessage, SessionMeta, Source};
 
 /// Claude Code 适配器
 pub struct ClaudeAdapter {
@@ -43,6 +43,165 @@ impl ClaudeAdapter {
             .last()
             .unwrap_or(path)
             .to_string()
+    }
+
+    /// 从 JSONL 文件路径直接解析会话（用于索引）
+    ///
+    /// 这是最核心的方法，正确处理中文路径问题：
+    /// 1. 从 JSONL 读取 cwd 获取真实项目路径
+    /// 2. 如果没有 cwd，回退到 decode_path
+    ///
+    /// # Arguments
+    /// * `jsonl_path` - JSONL 文件完整路径
+    ///
+    /// # Returns
+    /// * `Ok(Some(IndexableSession))` - 解析成功
+    /// * `Ok(None)` - 文件为空或无有效消息
+    /// * `Err` - 解析失败
+    pub fn parse_session_from_path(jsonl_path: &str) -> Result<Option<IndexableSession>> {
+        let path = Path::new(jsonl_path);
+        if !path.exists() {
+            anyhow::bail!("文件不存在: {}", jsonl_path);
+        }
+
+        // 1. 从路径提取 session_id
+        let session_id = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| anyhow::anyhow!("无效的文件名"))?;
+
+        // 2. 从路径提取编码的目录名
+        let encoded_dir_name = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown");
+
+        // 3. 从 JSONL 读取 cwd（优先）
+        let cwd = Self::read_cwd_from_jsonl(path);
+
+        // 4. 确定正确的 project_path
+        let project_path = cwd.unwrap_or_else(|| Self::decode_path(encoded_dir_name));
+        let project_name = Self::extract_project_name(&project_path);
+
+        // 5. 解析消息
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+
+        let mut messages = Vec::new();
+        let mut sequence: i64 = 0;
+
+        for line in reader.lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            let Ok(entry) = serde_json::from_str::<JsonlEntry>(&line) else {
+                continue;
+            };
+
+            // 只处理 message 类型
+            let entry_type = entry.entry_type.as_deref();
+            if entry_type != Some("message") && entry_type != Some("user") && entry_type != Some("assistant") {
+                continue;
+            }
+
+            // 提取 UUID
+            let Some(uuid) = entry.uuid.clone().or_else(|| {
+                entry.message.as_ref()?.id.clone()
+            }) else {
+                continue;
+            };
+
+            // 提取角色
+            let role = match entry_type {
+                Some("user") => "user",
+                Some("assistant") => "assistant",
+                Some("message") => {
+                    entry.message.as_ref()
+                        .and_then(|m| m.role.as_deref())
+                        .unwrap_or("user")
+                }
+                _ => continue,
+            };
+
+            // 提取内容
+            let content = Self::extract_content_static(&entry);
+            if content.is_empty() {
+                continue;
+            }
+
+            // 解析时间戳
+            let timestamp = entry.timestamp
+                .as_ref()
+                .and_then(|s| Self::parse_timestamp(s))
+                .unwrap_or_else(|| {
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0)
+                });
+
+            messages.push(IndexableMessage {
+                uuid,
+                role: role.to_string(),
+                content,
+                timestamp,
+                sequence,
+            });
+            sequence += 1;
+        }
+
+        if messages.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(IndexableSession {
+            session_id: session_id.to_string(),
+            project_path,
+            project_name,
+            messages,
+        }))
+    }
+
+    /// 静态方法提取内容
+    fn extract_content_static(entry: &JsonlEntry) -> String {
+        let Some(message) = &entry.message else {
+            return String::new();
+        };
+        let Some(content) = &message.content else {
+            return String::new();
+        };
+
+        match content {
+            ContentValue::Text(text) => text.clone(),
+            ContentValue::Blocks(blocks) => {
+                blocks.iter()
+                    .filter_map(|b| {
+                        if b.block_type.as_deref() == Some("text") {
+                            b.text.as_deref()
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+        }
+    }
+
+    /// 解析 ISO8601 时间戳为毫秒
+    fn parse_timestamp(s: &str) -> Option<i64> {
+        // 尝试解析 ISO8601 格式
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+            return Some(dt.timestamp_millis());
+        }
+        // 尝试解析纯数字（已经是毫秒）
+        if let Ok(ms) = s.parse::<i64>() {
+            return Some(ms);
+        }
+        None
     }
 
     /// 从 JSONL 文件快速读取 cwd（只读前几行）
