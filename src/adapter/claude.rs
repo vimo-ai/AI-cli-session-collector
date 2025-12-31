@@ -9,7 +9,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use super::ConversationAdapter;
-use crate::domain::{IndexableMessage, IndexableSession, MessageType, ParseResult, ParsedMessage, SessionMeta, Source};
+use crate::domain::{IndexableMessage, IndexableSession, MessageType, ParseResult, ParsedContent, ParsedMessage, SessionMeta, Source};
 
 /// Claude Code 适配器
 pub struct ClaudeAdapter {
@@ -128,7 +128,7 @@ impl ClaudeAdapter {
 
             // 提取内容
             let content = Self::extract_content_static(&entry);
-            if content.is_empty() {
+            if content.full.is_empty() {
                 continue;
             }
 
@@ -165,29 +165,75 @@ impl ClaudeAdapter {
         }))
     }
 
-    /// 静态方法提取内容
-    fn extract_content_static(entry: &JsonlEntry) -> String {
+    /// 静态方法提取内容（返回分离的 text 和 full）
+    fn extract_content_static(entry: &JsonlEntry) -> ParsedContent {
         let Some(message) = &entry.message else {
-            return String::new();
+            return ParsedContent::default();
         };
         let Some(content) = &message.content else {
-            return String::new();
+            return ParsedContent::default();
         };
 
         match content {
-            ContentValue::Text(text) => text.clone(),
+            ContentValue::Text(text) => ParsedContent {
+                text: text.clone(),
+                full: text.clone(),
+            },
             ContentValue::Blocks(blocks) => {
-                blocks.iter()
-                    .filter_map(|b| {
-                        if b.block_type.as_deref() == Some("text") {
-                            b.text.as_deref()
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
+                let mut text_parts = Vec::new();
+                let mut full_parts = Vec::new();
+
+                for block in blocks {
+                    let (text_part, full_part) = Self::format_content_block(block);
+                    if let Some(t) = text_part {
+                        text_parts.push(t);
+                    }
+                    if let Some(f) = full_part {
+                        full_parts.push(f);
+                    }
+                }
+
+                ParsedContent {
+                    text: text_parts.join("\n"),
+                    full: full_parts.join("\n"),
+                }
             }
+        }
+    }
+
+    /// 格式化单个 content block
+    /// 返回 (text_part, full_part)
+    /// - text_part: 纯对话文本（用于向量化）
+    /// - full_part: 完整格式化内容（用于 FTS）
+    fn format_content_block(block: &ContentBlock) -> (Option<String>, Option<String>) {
+        match block.block_type.as_deref() {
+            Some("text") => {
+                // text 类型：两者相同
+                (block.text.clone(), block.text.clone())
+            }
+            Some("tool_use") => {
+                // tool_use: 只在 full 中，不参与向量化
+                let name = block.name.as_deref().unwrap_or("unknown");
+                let input = block.input.as_ref()
+                    .map(|v| serde_json::to_string(v).unwrap_or_default())
+                    .unwrap_or_default();
+                (None, Some(format!("[Tool: {}] {}", name, input)))
+            }
+            Some("tool_result") => {
+                // tool_result: 只在 full 中，不参与向量化
+                let error_tag = if block.is_error == Some(true) { " Error" } else { "" };
+                let content = match &block.content {
+                    Some(serde_json::Value::String(s)) => s.clone(),
+                    Some(v) => serde_json::to_string(v).unwrap_or_default(),
+                    None => String::new(),
+                };
+                (None, Some(format!("[Result{}] {}", error_tag, content)))
+            }
+            Some("thinking") => {
+                // thinking: 不参与任何索引
+                (None, None)
+            }
+            _ => (None, None),
         }
     }
 
@@ -301,7 +347,7 @@ impl ClaudeAdapter {
 
         // 提取内容
         let content = self.extract_content(entry)?;
-        if content.is_empty() {
+        if content.full.is_empty() {
             return None;
         }
 
@@ -400,8 +446,8 @@ impl ClaudeAdapter {
         false
     }
 
-    /// 提取消息内容
-    fn extract_content(&self, entry: &JsonlEntry) -> Option<String> {
+    /// 提取消息内容（返回分离的 text 和 full）
+    fn extract_content(&self, entry: &JsonlEntry) -> Option<ParsedContent> {
         let message = entry.message.as_ref()?;
         let content = message.content.as_ref()?;
 
@@ -410,25 +456,34 @@ impl ClaudeAdapter {
                 if text.is_empty() {
                     None
                 } else {
-                    Some(text.clone())
+                    Some(ParsedContent {
+                        text: text.clone(),
+                        full: text.clone(),
+                    })
                 }
             }
             ContentValue::Blocks(blocks) => {
-                let text_parts: Vec<&str> = blocks
-                    .iter()
-                    .filter_map(|b| {
-                        if b.block_type.as_deref() == Some("text") {
-                            b.text.as_deref()
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
+                let mut text_parts = Vec::new();
+                let mut full_parts = Vec::new();
 
-                if text_parts.is_empty() {
+                for block in blocks {
+                    let (text_part, full_part) = Self::format_content_block(block);
+                    if let Some(t) = text_part {
+                        text_parts.push(t);
+                    }
+                    if let Some(f) = full_part {
+                        full_parts.push(f);
+                    }
+                }
+
+                // 如果 full 为空，返回 None
+                if full_parts.is_empty() {
                     None
                 } else {
-                    Some(text_parts.join("\n"))
+                    Some(ParsedContent {
+                        text: text_parts.join("\n"),
+                        full: full_parts.join("\n"),
+                    })
                 }
             }
         }
@@ -594,5 +649,16 @@ enum ContentValue {
 struct ContentBlock {
     #[serde(rename = "type")]
     block_type: Option<String>,
+    // text block
     text: Option<String>,
+    // tool_use block
+    id: Option<String>,
+    name: Option<String>,
+    input: Option<serde_json::Value>,
+    // tool_result block
+    tool_use_id: Option<String>,
+    content: Option<serde_json::Value>,
+    is_error: Option<bool>,
+    // thinking block
+    thinking: Option<String>,
 }

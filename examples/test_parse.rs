@@ -1,13 +1,31 @@
 //! 测试 Claude Code 解析
 
-use ai_session_core::{ClaudeAdapter, CodexAdapter, ConversationAdapter};
+use ai_cli_session_collector::{ClaudeAdapter, CodexAdapter, ConversationAdapter};
 use std::path::PathBuf;
 
 fn main() {
     // 初始化 tracing
     tracing_subscriber::fmt::init();
 
-    println!("=== 测试 ai-session-core 解析 ===\n");
+    println!("=== 测试 ai-cli-session-collector 解析 ===\n");
+
+    // 先测试包含 thinking 的文件
+    let thinking_file = "/Users/higuaifan/.claude/projects/-Users-higuaifan-Desktop-hi-----jarvis-samples/13519af9-186d-4406-8112-959afcc58158.jsonl";
+    println!("📋 测试 thinking 解析:");
+    if let Ok(Some(result)) = ClaudeAdapter::parse_session_from_path(thinking_file) {
+        let thinking_msgs: Vec<_> = result.messages.iter()
+            .filter(|m| m.content.contains("[Thinking]"))
+            .take(1)
+            .collect();
+        if !thinking_msgs.is_empty() {
+            println!("  ✅ Thinking 解析成功:");
+            let preview: String = thinking_msgs[0].content.chars().take(200).collect();
+            println!("    {}", preview);
+        } else {
+            println!("  ❌ 未找到 Thinking 内容");
+        }
+    }
+    println!();
 
     // 测试 Claude Code
     let home = std::env::var("HOME").unwrap();
@@ -33,11 +51,25 @@ fn main() {
                     println!("  创建时间: {:?}", result.created_at);
                     println!("  CWD: {:?}", result.cwd);
 
-                    // 显示前 2 条消息
-                    for (j, msg) in result.messages.iter().take(2).enumerate() {
-                        let content_preview: String = msg.content.chars().take(60).collect();
-                        let suffix = if msg.content.chars().count() > 60 { "..." } else { "" };
-                        println!("  [{}] {}: {}{}", j + 1, msg.message_type, content_preview, suffix);
+                    // 显示包含 tool_use 的消息
+                    let tool_msgs: Vec<_> = result.messages.iter()
+                        .filter(|m| m.content.contains("[Tool:"))
+                        .take(3)
+                        .collect();
+
+                    if !tool_msgs.is_empty() {
+                        println!("  📦 找到 {} 条包含 tool_use 的消息:", tool_msgs.len());
+                        for msg in tool_msgs {
+                            let preview: String = msg.content.chars().take(150).collect();
+                            println!("    {}", preview);
+                        }
+                    } else {
+                        // 显示前 2 条消息
+                        for (j, msg) in result.messages.iter().take(2).enumerate() {
+                            let content_preview: String = msg.content.chars().take(60).collect();
+                            let suffix = if msg.content.chars().count() > 60 { "..." } else { "" };
+                            println!("  [{}] {}: {}{}", j + 1, msg.message_type, content_preview, suffix);
+                        }
                     }
                 }
                 println!();

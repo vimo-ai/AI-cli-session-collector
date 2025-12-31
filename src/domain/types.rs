@@ -84,6 +84,15 @@ pub struct SessionMeta {
     pub updated_at: Option<String>,
 }
 
+/// 解析后的内容（分离 text 和 full）
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct ParsedContent {
+    /// 纯对话文本（用于向量化）
+    pub text: String,
+    /// 完整格式化内容（用于 FTS，包含 tool_use 等）
+    pub full: String,
+}
+
 /// 标准化的消息
 #[derive(Debug, Clone, Serialize)]
 pub struct ParsedMessage {
@@ -93,8 +102,8 @@ pub struct ParsedMessage {
     pub session_id: String,
     /// 消息类型
     pub message_type: MessageType,
-    /// 消息内容
-    pub content: String,
+    /// 消息内容（分离版本）
+    pub content: ParsedContent,
     /// 时间戳
     pub timestamp: Option<String>,
     /// 数据来源
@@ -145,8 +154,8 @@ pub struct IndexableMessage {
     pub uuid: String,
     /// 角色 (user/assistant)
     pub role: String,
-    /// 消息内容
-    pub content: String,
+    /// 消息内容（分离版本）
+    pub content: ParsedContent,
     /// 时间戳 (毫秒)
     pub timestamp: i64,
     /// 序号

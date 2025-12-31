@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 use super::ConversationAdapter;
-use crate::domain::{MessageType, ParseResult, ParsedMessage, SessionMeta, Source};
+use crate::domain::{MessageType, ParsedContent, ParseResult, ParsedMessage, SessionMeta, Source};
 
 /// Codex CLI 适配器
 pub struct CodexAdapter {
@@ -141,7 +141,10 @@ impl CodexAdapter {
                     uuid: format!("{}:user:0", meta.id),
                     session_id: meta.id.clone(),
                     message_type: MessageType::User,
-                    content: text.to_string(),
+                    content: ParsedContent {
+                        text: text.to_string(),
+                        full: text.to_string(),
+                    },
                     timestamp: created_at.clone(),
                     source: Source::Codex,
                     channel: Some("cli".to_string()),
@@ -196,7 +199,10 @@ impl CodexAdapter {
                                         uuid: Uuid::new_v4().to_string(),
                                         session_id: meta.id.clone(),
                                         message_type: MessageType::User,
-                                        content: text.to_string(),
+                                        content: ParsedContent {
+                                            text: text.to_string(),
+                                            full: text.to_string(),
+                                        },
                                         timestamp: ts.clone(),
                                         source: Source::Codex,
                                         channel: Some("cli".to_string()),
@@ -222,7 +228,10 @@ impl CodexAdapter {
                                         uuid: Uuid::new_v4().to_string(),
                                         session_id: meta.id.clone(),
                                         message_type: MessageType::Assistant,
-                                        content: text.to_string(),
+                                        content: ParsedContent {
+                                            text: text.to_string(),
+                                            full: text.to_string(),
+                                        },
                                         timestamp: ts,
                                         source: Source::Codex,
                                         channel: Some("cli".to_string()),
@@ -264,11 +273,18 @@ impl CodexAdapter {
                         let ts = Self::parse_timestamp(raw.get("timestamp"));
                         updated_at = ts.clone().or(updated_at);
 
+                        // Tool 调用不参与向量化，只放在 full
+                        let tool_content = format!("[Tool: {}] {}", tool_name,
+                            tool.get("arguments").map(|a| a.to_string()).unwrap_or_default());
+
                         messages.push(ParsedMessage {
                             uuid: uuid.clone(),
                             session_id: meta.id.clone(),
                             message_type: MessageType::Tool,
-                            content: format!("Tool call: {}", tool_name),
+                            content: ParsedContent {
+                                text: String::new(),
+                                full: tool_content,
+                            },
                             timestamp: ts,
                             source: Source::Codex,
                             channel: Some("cli".to_string()),
@@ -287,7 +303,7 @@ impl CodexAdapter {
                         .or_else(|| event.get("output"))
                         .unwrap_or(event);
 
-                    let content = if tool_output.is_string() {
+                    let output_text = if tool_output.is_string() {
                         tool_output.as_str().unwrap_or("").to_string()
                     } else {
                         tool_output.get("text")
@@ -304,11 +320,15 @@ impl CodexAdapter {
                     let ts = Self::parse_timestamp(tool_output.get("ts"));
                     updated_at = ts.clone().or(updated_at);
 
+                    // Tool 输出不参与向量化，只放在 full
                     messages.push(ParsedMessage {
                         uuid,
                         session_id: meta.id.clone(),
                         message_type: MessageType::Tool,
-                        content,
+                        content: ParsedContent {
+                            text: String::new(),
+                            full: format!("[Result] {}", output_text),
+                        },
                         timestamp: ts,
                         source: Source::Codex,
                         channel: Some("cli".to_string()),

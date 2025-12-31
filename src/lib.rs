@@ -12,4 +12,4 @@ pub mod domain;
 
 // Re-export 常用类型
 pub use adapter::{ClaudeAdapter, CodexAdapter, ConversationAdapter};
-pub use domain::{IndexableMessage, IndexableSession, MessageType, ParseResult, ParsedMessage, SessionMeta, Source};
+pub use domain::{IndexableMessage, IndexableSession, MessageType, ParsedContent, ParseResult, ParsedMessage, SessionMeta, Source};
