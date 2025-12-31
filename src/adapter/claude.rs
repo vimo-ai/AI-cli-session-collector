@@ -204,18 +204,23 @@ impl ClaudeAdapter {
         None
     }
 
-    /// 从 JSONL 文件快速读取 cwd（只读前几行）
+    /// 从 JSONL 文件快速读取 cwd（跳过 summary 等非消息行）
     fn read_cwd_from_jsonl(file_path: &Path) -> Option<String> {
         let file = File::open(file_path).ok()?;
         let reader = BufReader::new(file);
 
-        // 只读取前 10 行寻找 cwd
-        for line in reader.lines().take(10) {
+        // 读取前 50 行，跳过 summary/file-history-snapshot 等非消息行
+        for line in reader.lines().take(50) {
             if let Ok(line) = line {
                 if line.trim().is_empty() {
                     continue;
                 }
                 if let Ok(entry) = serde_json::from_str::<JsonlEntry>(&line) {
+                    // 跳过非消息类型
+                    let entry_type = entry.entry_type.as_deref();
+                    if matches!(entry_type, Some("summary") | Some("file-history-snapshot")) {
+                        continue;
+                    }
                     if let Some(cwd) = entry.cwd {
                         return Some(cwd);
                     }
@@ -258,7 +263,7 @@ impl ClaudeAdapter {
                     }
 
                     // 转换消息
-                    if let Some(msg) = self.convert_entry(&entry, session_id) {
+                    if let Some(msg) = self.convert_entry(&entry, session_id, &line) {
                         if first_timestamp.is_none() {
                             first_timestamp = msg.timestamp.clone();
                         }
@@ -283,7 +288,7 @@ impl ClaudeAdapter {
     }
 
     /// 转换单条消息
-    fn convert_entry(&self, entry: &JsonlEntry, session_id: &str) -> Option<ParsedMessage> {
+    fn convert_entry(&self, entry: &JsonlEntry, session_id: &str, raw_line: &str) -> Option<ParsedMessage> {
         let entry_type = entry.entry_type.as_deref()?;
 
         // 跳过 summary 类型
@@ -318,7 +323,7 @@ impl ClaudeAdapter {
             tool_call_id: None,
             tool_name: None,
             tool_args: None,
-            raw: None,
+            raw: Some(raw_line.to_string()),
         })
     }
 

@@ -38,6 +38,19 @@ impl std::fmt::Display for MessageType {
     }
 }
 
+impl std::str::FromStr for MessageType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "human" | "user" => Ok(MessageType::User),
+            "assistant" => Ok(MessageType::Assistant),
+            "tool" => Ok(MessageType::Tool),
+            _ => Err(format!("Unknown message type: {}", s)),
+        }
+    }
+}
+
 /// 标准化的会话元数据
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionMeta {
