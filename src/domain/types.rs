@@ -160,4 +160,6 @@ pub struct IndexableMessage {
     pub timestamp: i64,
     /// 序号
     pub sequence: i64,
+    /// 原始 JSONL 行
+    pub raw: Option<String>,
 }

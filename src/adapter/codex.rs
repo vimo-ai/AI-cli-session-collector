@@ -7,7 +7,6 @@ use serde::Deserialize;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use uuid::Uuid;
 
 use super::ConversationAdapter;
 use crate::domain::{MessageType, ParsedContent, ParseResult, ParsedMessage, SessionMeta, Source};
@@ -34,24 +33,32 @@ impl CodexAdapter {
         self.codex_path.join("sessions")
     }
 
-    /// 解析时间戳 (秒或毫秒) -> 本地时区 ISO 8601
+    /// 解析时间戳 -> 毫秒时间戳字符串
+    /// 支持: 数字(秒/毫秒)、ISO 8601 字符串
     fn parse_timestamp(ts: Option<&serde_json::Value>) -> Option<String> {
+        use chrono::DateTime;
+
         let ts = ts?;
-        let num = if ts.is_number() {
-            ts.as_f64()?
+
+        let millis: i64 = if ts.is_number() {
+            let num = ts.as_f64()?;
+            // 秒或毫秒
+            if num > 1e12 { num as i64 } else { (num * 1000.0) as i64 }
         } else if let Some(s) = ts.as_str() {
-            s.parse::<f64>().ok()?
+            // 尝试解析为数字
+            if let Ok(num) = s.parse::<f64>() {
+                if num > 1e12 { num as i64 } else { (num * 1000.0) as i64 }
+            } else if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+                // ISO 8601 格式 (如 "2025-10-17T01:49:30.935Z")
+                dt.timestamp_millis()
+            } else {
+                return None;
+            }
         } else {
             return None;
         };
 
-        // Codex ts 可能是秒或毫秒
-        let millis = if num > 1e12 { num as i64 } else { (num * 1000.0) as i64 };
-
-        // 转换为本地时区 ISO 8601 格式
-        use chrono::{Local, TimeZone};
-        let datetime = Local.timestamp_millis_opt(millis).single()?;
-        Some(datetime.format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string())
+        Some(millis.to_string())
     }
 
     /// 根据 ts 和 session_id 查找 rollout 文件
@@ -133,6 +140,7 @@ impl CodexAdapter {
         let mut created_at = meta.created_at.clone();
         let mut updated_at = meta.updated_at.clone();
         let meta_bag = serde_json::Map::new();
+        let mut msg_seq: usize = 0;
 
         // 首条用户消息来自 history 摘要
         if let Some(history_meta) = &meta.meta {
@@ -195,8 +203,9 @@ impl CodexAdapter {
                             if let Some(text) = event.get("message").and_then(|m| m.as_str()) {
                                 if !text.is_empty() {
                                     let ts = Self::parse_timestamp(raw.get("timestamp"));
+                                    msg_seq += 1;
                                     messages.push(ParsedMessage {
-                                        uuid: Uuid::new_v4().to_string(),
+                                        uuid: format!("{}:user:{}", meta.id, msg_seq),
                                         session_id: meta.id.clone(),
                                         message_type: MessageType::User,
                                         content: ParsedContent {
@@ -224,8 +233,9 @@ impl CodexAdapter {
                                 if !text.is_empty() {
                                     let ts = Self::parse_timestamp(raw.get("timestamp"));
                                     updated_at = ts.clone().or(updated_at);
+                                    msg_seq += 1;
                                     messages.push(ParsedMessage {
-                                        uuid: Uuid::new_v4().to_string(),
+                                        uuid: format!("{}:assistant:{}", meta.id, msg_seq),
                                         session_id: meta.id.clone(),
                                         message_type: MessageType::Assistant,
                                         content: ParsedContent {
@@ -265,10 +275,11 @@ impl CodexAdapter {
                             .and_then(|n| n.as_str())
                             .unwrap_or("unknown");
 
+                        msg_seq += 1;
                         let uuid = tool.get("id")
                             .and_then(|i| i.as_str())
                             .map(String::from)
-                            .unwrap_or_else(|| Uuid::new_v4().to_string());
+                            .unwrap_or_else(|| format!("{}:tool:{}", meta.id, msg_seq));
 
                         let ts = Self::parse_timestamp(raw.get("timestamp"));
                         updated_at = ts.clone().or(updated_at);
@@ -312,10 +323,11 @@ impl CodexAdapter {
                             .unwrap_or_else(|| tool_output.to_string())
                     };
 
+                    msg_seq += 1;
                     let uuid = tool_output.get("id")
                         .and_then(|i| i.as_str())
                         .map(String::from)
-                        .unwrap_or_else(|| Uuid::new_v4().to_string());
+                        .unwrap_or_else(|| format!("{}:result:{}", meta.id, msg_seq));
 
                     let ts = Self::parse_timestamp(tool_output.get("ts"));
                     updated_at = ts.clone().or(updated_at);
@@ -458,4 +470,89 @@ struct HistoryEntry {
     session_id: String,
     ts: Option<f64>,
     text: Option<String>,
+}
+
+// ==================== 单元测试 ====================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_parse_timestamp_millis_number() {
+        // 毫秒数字
+        let ts = json!(1697506170935_i64);
+        let result = CodexAdapter::parse_timestamp(Some(&ts));
+        assert_eq!(result, Some("1697506170935".to_string()));
+    }
+
+    #[test]
+    fn test_parse_timestamp_seconds_number() {
+        // 秒数字 (自动转毫秒)
+        let ts = json!(1697506170.935);
+        let result = CodexAdapter::parse_timestamp(Some(&ts));
+        assert_eq!(result, Some("1697506170935".to_string()));
+    }
+
+    #[test]
+    fn test_parse_timestamp_millis_string() {
+        // 毫秒字符串
+        let ts = json!("1697506170935");
+        let result = CodexAdapter::parse_timestamp(Some(&ts));
+        assert_eq!(result, Some("1697506170935".to_string()));
+    }
+
+    #[test]
+    fn test_parse_timestamp_iso8601() {
+        // ISO 8601 格式 (rollout 文件格式)
+        let ts = json!("2025-10-17T01:49:30.935Z");
+        let result = CodexAdapter::parse_timestamp(Some(&ts));
+        assert!(result.is_some());
+        // 验证是毫秒时间戳格式
+        let millis: i64 = result.unwrap().parse().unwrap();
+        assert!(millis > 1700000000000); // 2023年之后
+    }
+
+    #[test]
+    fn test_parse_timestamp_iso8601_with_timezone() {
+        // ISO 8601 带时区
+        let ts = json!("2025-10-17T09:49:30.935+08:00");
+        let result = CodexAdapter::parse_timestamp(Some(&ts));
+        assert!(result.is_some());
+        let millis: i64 = result.unwrap().parse().unwrap();
+        assert!(millis > 1700000000000);
+    }
+
+    #[test]
+    fn test_parse_timestamp_none() {
+        let result = CodexAdapter::parse_timestamp(None);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_timestamp_invalid() {
+        // 无效格式
+        let ts = json!("not-a-timestamp");
+        let result = CodexAdapter::parse_timestamp(Some(&ts));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_timestamp_output_is_parseable_i64() {
+        // 确保输出可被 collector 的 parse::<i64>() 解析
+        let cases = vec![
+            json!(1697506170935_i64),
+            json!(1697506170.935),
+            json!("1697506170935"),
+            json!("2025-10-17T01:49:30.935Z"),
+        ];
+
+        for ts in cases {
+            let result = CodexAdapter::parse_timestamp(Some(&ts));
+            assert!(result.is_some(), "Failed for: {:?}", ts);
+            let parsed: Result<i64, _> = result.unwrap().parse();
+            assert!(parsed.is_ok(), "Output not parseable as i64 for: {:?}", ts);
+        }
+    }
 }

@@ -23,19 +23,6 @@ impl ClaudeAdapter {
         Self { projects_path }
     }
 
-    /// 解码 Claude Code 目录名为真实路径
-    /// Claude Code 使用 `-` 替换 `/` 的编码方式
-    /// @example -Users-xxx-project → /Users/xxx/project
-    pub fn decode_path(encoded: &str) -> String {
-        // 先移除开头的 `-`，替换为 `/`，然后把所有 `-` 替换为 `/`
-        let decoded = if encoded.starts_with('-') {
-            format!("/{}", &encoded[1..].replace('-', "/"))
-        } else {
-            encoded.replace('-', "/")
-        };
-        decoded
-    }
-
     /// 从路径提取项目名
     pub fn extract_project_name(path: &str) -> String {
         path.split('/')
@@ -47,9 +34,7 @@ impl ClaudeAdapter {
 
     /// 从 JSONL 文件路径直接解析会话（用于索引）
     ///
-    /// 这是最核心的方法，正确处理中文路径问题：
-    /// 1. 从 JSONL 读取 cwd 获取真实项目路径
-    /// 2. 如果没有 cwd，回退到 decode_path
+    /// 从 JSONL 读取 cwd 获取真实项目路径，无 cwd 时使用 encoded_dir_name 占位
     ///
     /// # Arguments
     /// * `jsonl_path` - JSONL 文件完整路径
@@ -80,8 +65,8 @@ impl ClaudeAdapter {
         // 3. 从 JSONL 读取 cwd（优先）
         let cwd = Self::read_cwd_from_jsonl(path);
 
-        // 4. 确定正确的 project_path
-        let project_path = cwd.unwrap_or_else(|| Self::decode_path(encoded_dir_name));
+        // 4. 确定正确的 project_path（无 cwd 时使用 encoded_dir_name 占位）
+        let project_path = cwd.unwrap_or_else(|| encoded_dir_name.to_string());
         let project_name = Self::extract_project_name(&project_path);
 
         // 5. 解析消息
@@ -149,6 +134,7 @@ impl ClaudeAdapter {
                 content,
                 timestamp,
                 sequence,
+                raw: Some(line.clone()),
             });
             sequence += 1;
         }
@@ -521,9 +507,6 @@ impl ConversationAdapter for ClaudeAdapter {
                 continue;
             }
 
-            // 解码项目路径（作为 fallback，当 JSONL 中无 cwd 时使用）
-            let decoded_path = Self::decode_path(encoded_name);
-
             // 扫描 JSONL 文件
             for file_entry in fs::read_dir(&project_dir)? {
                 let file_entry = file_entry?;
@@ -563,8 +546,8 @@ impl ConversationAdapter for ClaudeAdapter {
                 // 从 JSONL 文件读取真实的 cwd（解决非 ASCII 路径问题）
                 let cwd = Self::read_cwd_from_jsonl(&file_path);
 
-                // 优先使用 cwd，否则回退到 decode_path 结果
-                let actual_project_path = cwd.clone().unwrap_or_else(|| decoded_path.clone());
+                // 优先使用 cwd，无则使用 encoded_name 占位
+                let actual_project_path = cwd.clone().unwrap_or_else(|| encoded_name.to_string());
                 let actual_project_name = Self::extract_project_name(&actual_project_path);
 
                 results.push(SessionMeta {
