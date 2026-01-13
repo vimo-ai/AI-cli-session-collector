@@ -262,6 +262,15 @@ impl ClaudeAdapter {
         None
     }
 
+    /// 快速统计 JSONL 文件的行数（消息数量）
+    /// 只统计非空行，不解析 JSON 内容以提高性能
+    fn count_jsonl_lines(file_path: &Path) -> Option<usize> {
+        let file = File::open(file_path).ok()?;
+        let reader = BufReader::new(file);
+        let count = reader.lines().filter_map(|l| l.ok()).filter(|l| !l.trim().is_empty()).count();
+        Some(count)
+    }
+
     /// 解析单个 JSONL 文件
     fn parse_jsonl_file(
         &self,
@@ -546,6 +555,9 @@ impl ConversationAdapter for ClaudeAdapter {
                 // 从 JSONL 文件读取真实的 cwd（解决非 ASCII 路径问题）
                 let cwd = Self::read_cwd_from_jsonl(&file_path);
 
+                // 快速统计消息数量（JSONL 行数）
+                let message_count = Self::count_jsonl_lines(&file_path);
+
                 // 优先使用 cwd，无则使用 encoded_name 占位
                 let actual_project_path = cwd.clone().unwrap_or_else(|| encoded_name.to_string());
                 let actual_project_name = Self::extract_project_name(&actual_project_path);
@@ -560,6 +572,7 @@ impl ConversationAdapter for ClaudeAdapter {
                     session_path: Some(file_path.to_string_lossy().to_string()),
                     file_mtime,
                     file_size,
+                    message_count,
                     cwd,
                     model: None,
                     meta: None,
@@ -629,6 +642,7 @@ enum ContentValue {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // 字段用于 serde 反序列化
 struct ContentBlock {
     #[serde(rename = "type")]
     block_type: Option<String>,

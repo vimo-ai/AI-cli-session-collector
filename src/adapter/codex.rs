@@ -125,6 +125,15 @@ impl CodexAdapter {
         None
     }
 
+    /// 快速统计 rollout 文件中的事件数（消息数估算）
+    fn count_rollout_events(file_path: &Path) -> Option<usize> {
+        let file = File::open(file_path).ok()?;
+        let reader = BufReader::new(file);
+        // Codex rollout 是 JSONL 格式，每行一个事件
+        let count = reader.lines().filter_map(|l| l.ok()).filter(|l| !l.trim().is_empty()).count();
+        Some(count)
+    }
+
     /// 解析 rollout 文件
     fn parse_rollout_file(&self, meta: &SessionMeta) -> Result<ParseResult> {
         let session_path = meta.session_path.as_ref()
@@ -431,6 +440,11 @@ impl ConversationAdapter for CodexAdapter {
                 meta_map.insert("historyTs".to_string(), serde_json::Value::from(ts));
             }
 
+            // 统计 rollout 文件中的消息数（简化：使用事件数估算）
+            let message_count = session_path
+                .as_ref()
+                .and_then(|p| Self::count_rollout_events(p));
+
             results.push(SessionMeta {
                 id: entry.session_id,
                 source: Source::Codex,
@@ -441,6 +455,7 @@ impl ConversationAdapter for CodexAdapter {
                 session_path: session_path.map(|p| p.to_string_lossy().to_string()),
                 file_mtime,
                 file_size,
+                message_count,
                 cwd: None,
                 model: None,
                 meta: Some(serde_json::Value::Object(meta_map)),

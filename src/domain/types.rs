@@ -72,6 +72,9 @@ pub struct SessionMeta {
     pub file_mtime: Option<u64>,
     /// 文件大小
     pub file_size: Option<u64>,
+    /// 消息数量 (JSONL 行数)
+    #[serde(rename = "messageCount")]
+    pub message_count: Option<usize>,
     /// 工作目录
     pub cwd: Option<String>,
     /// 默认模型
