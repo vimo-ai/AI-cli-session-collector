@@ -340,9 +340,9 @@ impl ClaudeAdapter {
         // 确定消息类型
         let msg_type = self.get_message_type(entry)?;
 
-        // 提取内容
-        let content = self.extract_content(entry)?;
-        if content.full.is_empty() {
+        // 提取内容（包括工具信息）
+        let extracted = self.extract_content(entry)?;
+        if extracted.content.full.is_empty() {
             return None;
         }
 
@@ -356,14 +356,14 @@ impl ClaudeAdapter {
             uuid,
             session_id: session_id.to_string(),
             message_type: msg_type,
-            content,
+            content: extracted.content,
             timestamp: entry.timestamp.clone(),
             source: Source::Claude,
             channel: Some("code".to_string()),
             model: entry.model.clone(),
-            tool_call_id: None,
-            tool_name: None,
-            tool_args: None,
+            tool_call_id: extracted.tool_call_id,
+            tool_name: extracted.tool_name,
+            tool_args: extracted.tool_args,
             raw: Some(raw_line.to_string()),
         })
     }
@@ -441,8 +441,8 @@ impl ClaudeAdapter {
         false
     }
 
-    /// 提取消息内容（返回分离的 text 和 full）
-    fn extract_content(&self, entry: &JsonlEntry) -> Option<ParsedContent> {
+    /// 提取消息内容（返回分离的 text 和 full 以及工具信息）
+    fn extract_content(&self, entry: &JsonlEntry) -> Option<ExtractedContent> {
         let message = entry.message.as_ref()?;
         let content = message.content.as_ref()?;
 
@@ -451,15 +451,23 @@ impl ClaudeAdapter {
                 if text.is_empty() {
                     None
                 } else {
-                    Some(ParsedContent {
-                        text: text.clone(),
-                        full: text.clone(),
+                    Some(ExtractedContent {
+                        content: ParsedContent {
+                            text: text.clone(),
+                            full: text.clone(),
+                        },
+                        tool_call_id: None,
+                        tool_name: None,
+                        tool_args: None,
                     })
                 }
             }
             ContentValue::Blocks(blocks) => {
                 let mut text_parts = Vec::new();
                 let mut full_parts = Vec::new();
+                let mut tool_call_id = None;
+                let mut tool_name = None;
+                let mut tool_args = None;
 
                 for block in blocks {
                     let (text_part, full_part) = Self::format_content_block(block);
@@ -469,15 +477,28 @@ impl ClaudeAdapter {
                     if let Some(f) = full_part {
                         full_parts.push(f);
                     }
+
+                    // 提取 tool_use block 的信息
+                    if block.block_type.as_deref() == Some("tool_use") {
+                        tool_call_id = block.id.clone();
+                        tool_name = block.name.clone();
+                        tool_args = block.input.as_ref()
+                            .map(|v| serde_json::to_string(v).unwrap_or_default());
+                    }
                 }
 
                 // 如果 full 为空，返回 None
                 if full_parts.is_empty() {
                     None
                 } else {
-                    Some(ParsedContent {
-                        text: text_parts.join("\n"),
-                        full: full_parts.join("\n"),
+                    Some(ExtractedContent {
+                        content: ParsedContent {
+                            text: text_parts.join("\n"),
+                            full: full_parts.join("\n"),
+                        },
+                        tool_call_id,
+                        tool_name,
+                        tool_args,
                     })
                 }
             }
@@ -607,6 +628,14 @@ impl ConversationAdapter for ClaudeAdapter {
 }
 
 // ==================== JSONL 数据结构 ====================
+
+/// 提取的内容（包括工具信息）
+struct ExtractedContent {
+    content: ParsedContent,
+    tool_call_id: Option<String>,
+    tool_name: Option<String>,
+    tool_args: Option<String>,
+}
 
 #[derive(Debug, Deserialize)]
 struct JsonlEntry {
