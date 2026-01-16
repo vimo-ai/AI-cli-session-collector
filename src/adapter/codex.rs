@@ -1,466 +1,792 @@
 //! Codex CLI 数据适配器
 //!
-//! 解析 ~/.codex/history.jsonl (摘要) 和 ~/.codex/sessions/ (rollout 事件流)
+//! 全量采集 ~/.codex/ 下的会话数据
+//!
+//! ## 数据格式
+//! - history.jsonl: 会话摘要列表
+//! - sessions/{year}/{month}/{day}/{sessionId}.jsonl: rollout 事件流
+//!
+//! ## 事件类型
+//! - session_meta: 会话元数据 (id, cwd, cli_version, source, git)
+//! - turn_context: 对话上下文 (cwd, approval_policy, sandbox_policy, model, summary)
+//! - response_item: AI响应项
+//!   - message: 用户/助手消息
+//!   - reasoning: 推理过程 (summary, encrypted_content)
+//!   - function_call: 函数调用 (name, call_id, arguments)
+//!   - function_call_output: 函数输出 (call_id, output)
+//!   - custom_tool_call: 自定义工具调用
+//!   - custom_tool_call_output: 自定义工具输出
+//!   - ghost_snapshot: 快照
+//! - compacted: 上下文压缩摘要
+//! - event_msg: 事件消息 (与 response_item 部分重复，以 response_item 为主)
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Deserialize;
-use std::fs::{self, File};
+use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
-use super::ConversationAdapter;
-use crate::domain::{MessageType, ParsedContent, ParseResult, ParsedMessage, SessionMeta, Source};
+use super::{AdapterMeta, ConversationAdapter};
+use crate::domain::{
+    MessageType, ParseResult, ParsedContent, ParsedMessage, SessionMeta, Source,
+};
+
+// ============================================================================
+// 适配器元信息（静态配置）
+// ============================================================================
+
+/// Codex CLI 适配器元信息
+pub static CODEX_META: AdapterMeta = AdapterMeta {
+    source: Source::Codex,
+    name: "Codex CLI",
+    default_path: ".codex",
+    env_var: "CODEX_PATH",
+    extensions: &["jsonl"],
+    recursive: true,
+};
+
+/// history.jsonl 条目
+#[derive(Debug, Deserialize)]
+struct HistoryEntry {
+    session_id: String,
+    ts: serde_json::Value, // 可能是数字或字符串
+    text: Option<String>,
+}
+
+/// Rollout 事件（通用结构）
+/// 格式: { timestamp, type, payload: {...} }
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+struct RolloutEvent {
+    timestamp: Option<String>,
+    #[serde(rename = "type")]
+    event_type: Option<String>,
+    payload: Option<serde_json::Value>,
+}
+
+/// session_meta payload
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+struct SessionMetaPayload {
+    id: Option<String>,
+    cwd: Option<String>,
+    cli_version: Option<String>,
+    source: Option<String>,
+    originator: Option<String>,
+    instructions: Option<serde_json::Value>,
+    git: Option<GitInfo>,
+}
+
+/// Git 信息
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+struct GitInfo {
+    commit_hash: Option<String>,
+    branch: Option<String>,
+    repository_url: Option<String>,
+}
+
+/// turn_context payload
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+struct TurnContextPayload {
+    cwd: Option<String>,
+    model: Option<String>,
+    approval_policy: Option<String>,
+    sandbox_policy: Option<serde_json::Value>,
+    summary: Option<String>,
+}
+
+/// response_item payload
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+struct ResponseItemPayload {
+    #[serde(rename = "type")]
+    item_type: Option<String>,
+    role: Option<String>,
+    content: Option<Vec<ContentBlock>>,
+    id: Option<String>,
+    // function_call 字段
+    name: Option<String>,
+    call_id: Option<String>,
+    arguments: Option<String>,
+    // function_call_output 字段
+    output: Option<String>,
+    // reasoning 字段
+    summary: Option<Vec<SummaryBlock>>,
+    encrypted_content: Option<String>,
+}
+
+/// 内容块
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+struct ContentBlock {
+    #[serde(rename = "type")]
+    block_type: Option<String>,
+    text: Option<String>,
+    // tool 相关
+    name: Option<String>,
+    call_id: Option<String>,
+    arguments: Option<String>,
+    output: Option<String>,
+}
+
+/// reasoning summary 块
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+struct SummaryBlock {
+    #[serde(rename = "type")]
+    block_type: Option<String>,
+    text: Option<String>,
+}
+
+/// compacted payload
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+struct CompactedPayload {
+    message: Option<String>,
+}
 
 /// Codex CLI 适配器
 pub struct CodexAdapter {
-    /// Codex 数据目录 (~/.codex)
-    codex_path: PathBuf,
+    /// Codex 根目录 (~/.codex)
+    data_path: PathBuf,
+}
+
+impl Default for CodexAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CodexAdapter {
-    /// 创建适配器
-    pub fn new(codex_path: PathBuf) -> Self {
-        Self { codex_path }
+    /// 创建适配器（使用默认路径或环境变量）
+    pub fn new() -> Self {
+        let path = std::env::var(CODEX_META.env_var)
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                dirs::home_dir()
+                    .unwrap_or_default()
+                    .join(CODEX_META.default_path)
+            });
+        Self { data_path: path }
+    }
+
+    /// 使用自定义路径创建适配器
+    pub fn with_path(path: PathBuf) -> Self {
+        Self { data_path: path }
     }
 
     /// history.jsonl 路径
     fn history_path(&self) -> PathBuf {
-        self.codex_path.join("history.jsonl")
+        self.data_path.join("history.jsonl")
     }
 
-    /// sessions 目录路径
+    /// sessions 根目录
     fn sessions_root(&self) -> PathBuf {
-        self.codex_path.join("sessions")
+        self.data_path.join("sessions")
     }
 
-    /// 解析时间戳 -> 毫秒时间戳字符串
-    /// 支持: 数字(秒/毫秒)、ISO 8601 字符串
-    fn parse_timestamp(ts: Option<&serde_json::Value>) -> Option<String> {
-        use chrono::DateTime;
-
-        let ts = ts?;
-
-        let millis: i64 = if ts.is_number() {
-            let num = ts.as_f64()?;
-            // 秒或毫秒
-            if num > 1e12 { num as i64 } else { (num * 1000.0) as i64 }
-        } else if let Some(s) = ts.as_str() {
-            // 尝试解析为数字
-            if let Ok(num) = s.parse::<f64>() {
-                if num > 1e12 { num as i64 } else { (num * 1000.0) as i64 }
-            } else if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-                // ISO 8601 格式 (如 "2025-10-17T01:49:30.935Z")
-                dt.timestamp_millis()
-            } else {
-                return None;
-            }
+    /// 解析时间戳（秒或毫秒）
+    fn parse_timestamp(ts: &serde_json::Value) -> Option<i64> {
+        let num = match ts {
+            serde_json::Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)),
+            serde_json::Value::String(s) => s.parse::<i64>().ok(),
+            _ => None,
+        }?;
+        // 判断是秒还是毫秒
+        if num > 1_000_000_000_000 {
+            Some(num) // 已经是毫秒
         } else {
-            return None;
-        };
-
-        Some(millis.to_string())
-    }
-
-    /// 根据 ts 和 session_id 查找 rollout 文件
-    fn resolve_session_path(&self, ts: Option<&str>, session_id: &str) -> Option<PathBuf> {
-        let sessions_root = self.sessions_root();
-        if !sessions_root.exists() {
-            return None;
+            Some(num * 1000) // 秒转毫秒
         }
-
-        // 尝试从时间戳解析日期目录 (简化实现：直接递归搜索)
-        let _ = ts; // 暂不使用时间戳优化查找
-
-        // 递归搜索包含 session_id 的文件
-        self.search_session_file(&sessions_root, session_id)
     }
 
-    /// 递归搜索包含 session_id 的文件
-    fn search_session_file(&self, dir: &Path, session_id: &str) -> Option<PathBuf> {
-        let entries = fs::read_dir(dir).ok()?;
-
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let name = path.file_name()?.to_str()?;
-
-            if name.contains(session_id) {
-                return Some(path);
-            }
-
-            // 目录则递归
-            if path.is_dir() {
-                if let Some(found) = self.search_session_file(&path, session_id) {
-                    return Some(found);
-                }
-            }
-        }
-
-        None
+    /// 格式化时间戳为字符串
+    fn format_timestamp(ts: &serde_json::Value) -> Option<String> {
+        Self::parse_timestamp(ts).map(|ms| ms.to_string())
     }
 
-    /// 从 rollout 文件第一行提取 cwd
-    fn extract_project_path(&self, session_path: &Path) -> Option<String> {
-        let file = File::open(session_path).ok()?;
-        let reader = BufReader::new(file);
+    /// 从时间戳获取日期目录路径
+    fn get_date_dir(&self, ts_ms: i64) -> PathBuf {
+        use chrono::{TimeZone, Utc};
+        let dt = Utc.timestamp_millis_opt(ts_ms).single().unwrap_or_else(Utc::now);
+        let year = dt.format("%Y").to_string();
+        let month = dt.format("%m").to_string();
+        let day = dt.format("%d").to_string();
+        self.sessions_root().join(year).join(month).join(day)
+    }
 
-        for line in reader.lines().take(5).flatten() {
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            if let Ok(raw) = serde_json::from_str::<serde_json::Value>(&line) {
-                let event_type = raw.get("type").or_else(|| {
-                    raw.get("payload").and_then(|p| p.get("type"))
-                });
-
-                if event_type.and_then(|t| t.as_str()) == Some("session_meta") {
-                    let payload = raw.get("payload").unwrap_or(&raw);
-                    if let Some(cwd) = payload.get("cwd").and_then(|c| c.as_str()) {
-                        return Some(cwd.to_string());
+    /// 解析 session 路径
+    /// 优先在对应日期目录查找，找不到则递归搜索
+    fn resolve_session_path(&self, session_id: &str, ts: Option<i64>) -> Option<PathBuf> {
+        // 优先在日期目录查找
+        if let Some(ts_ms) = ts {
+            let day_dir = self.get_date_dir(ts_ms);
+            if day_dir.exists() {
+                if let Ok(entries) = fs::read_dir(&day_dir) {
+                    for entry in entries.flatten() {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        if name.contains(session_id) {
+                            return Some(entry.path());
+                        }
                     }
                 }
             }
         }
 
+        // 递归搜索
+        self.search_session_recursive(&self.sessions_root(), session_id)
+    }
+
+    /// 递归搜索 session 文件
+    fn search_session_recursive(&self, root: &Path, session_id: &str) -> Option<PathBuf> {
+        let mut stack = vec![root.to_path_buf()];
+
+        while let Some(dir) = stack.pop() {
+            if let Ok(entries) = fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.contains(session_id) {
+                        return Some(entry.path());
+                    }
+                    // 可能是目录（年/月/日）
+                    if entry.path().is_dir() {
+                        stack.push(entry.path());
+                    }
+                }
+            }
+        }
         None
     }
 
-    /// 快速统计 rollout 文件中的事件数（消息数估算）
-    fn count_rollout_events(file_path: &Path) -> Option<usize> {
-        let file = File::open(file_path).ok()?;
+    /// 从 rollout 文件提取 cwd
+    /// 格式: { type: "session_meta", payload: { cwd: "..." } }
+    ///    或: { type: "turn_context", payload: { cwd: "..." } }
+    fn extract_cwd_from_rollout(path: &Path) -> Option<String> {
+        let file = fs::File::open(path).ok()?;
         let reader = BufReader::new(file);
-        // Codex rollout 是 JSONL 格式，每行一个事件
-        let count = reader.lines().filter_map(|l| l.ok()).filter(|l| !l.trim().is_empty()).count();
-        Some(count)
+
+        for line in reader.lines().take(10) {
+            let line = line.ok()?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Ok(event) = serde_json::from_str::<RolloutEvent>(&line) {
+                let event_type = event.event_type.as_deref();
+
+                // session_meta 或 turn_context 都可能有 cwd
+                if matches!(event_type, Some("session_meta") | Some("turn_context")) {
+                    if let Some(payload) = &event.payload {
+                        if let Some(cwd) = payload.get("cwd").and_then(|v| v.as_str()) {
+                            return Some(cwd.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 
-    /// 解析 rollout 文件
-    fn parse_rollout_file(&self, meta: &SessionMeta) -> Result<ParseResult> {
-        let session_path = meta.session_path.as_ref()
-            .context("缺少 session_path")?;
+    /// 从路径提取项目名
+    fn extract_project_name(path: &str) -> String {
+        path.split('/')
+            .filter(|s| !s.is_empty())
+            .last()
+            .unwrap_or(path)
+            .to_string()
+    }
 
-        let file = File::open(session_path)
-            .with_context(|| format!("无法打开文件: {}", session_path))?;
+    /// 从 payload 提取 content 文本
+    /// 格式: { content: [{ type: "input_text"|"text", text: "..." }, ...] }
+    fn extract_content_text(payload: &serde_json::Value) -> String {
+        let mut texts = Vec::new();
+
+        if let Some(content_arr) = payload.get("content").and_then(|v| v.as_array()) {
+            for block in content_arr {
+                let block_type = block.get("type").and_then(|v| v.as_str());
+
+                match block_type {
+                    Some("input_text") | Some("text") | Some("output_text") => {
+                        if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
+                            texts.push(text.to_string());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        texts.join("\n")
+    }
+
+    /// 解析 rollout 文件（全量采集）
+    ///
+    /// 采集所有事件类型：
+    /// - session_meta: 元数据 → 存入 session_meta_list
+    /// - turn_context: 上下文 → 存入 turn_contexts
+    /// - response_item (message): 消息 → ParsedMessage
+    /// - response_item (reasoning): 推理 → ParsedMessage (meta 存 summary/encrypted)
+    /// - response_item (function_call): 工具调用 → ParsedMessage
+    /// - response_item (function_call_output): 工具输出 → ParsedMessage (Tool)
+    /// - response_item (custom_tool_call): 自定义工具 → ParsedMessage
+    /// - response_item (custom_tool_call_output): 自定义工具输出 → ParsedMessage (Tool)
+    /// - response_item (ghost_snapshot): 快照 → ParsedMessage (meta 存 payload)
+    /// - compacted: 压缩摘要 → ParsedMessage (System)
+    fn parse_rollout(&self, meta: &SessionMeta) -> Result<ParseResult> {
+        let session_path = meta
+            .session_path
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("缺少 session_path"))?;
+
+        let file = fs::File::open(session_path)?;
         let reader = BufReader::new(file);
 
         let mut messages = Vec::new();
         let mut cwd = meta.cwd.clone();
         let mut model = meta.model.clone();
-        let mut created_at = meta.created_at.clone();
-        let mut updated_at = meta.updated_at.clone();
-        let meta_bag = serde_json::Map::new();
-        let mut msg_seq: usize = 0;
+        let mut first_timestamp: Option<String> = None;
+        let mut last_timestamp: Option<String> = None;
+        let mut sequence = 0i64;
 
-        // 首条用户消息来自 history 摘要
-        if let Some(history_meta) = &meta.meta {
-            if let Some(text) = history_meta.get("historyText").and_then(|t| t.as_str()) {
-                messages.push(ParsedMessage {
-                    uuid: format!("{}:user:0", meta.id),
-                    session_id: meta.id.clone(),
-                    message_type: MessageType::User,
-                    content: ParsedContent {
-                        text: text.to_string(),
-                        full: text.to_string(),
-                    },
-                    timestamp: created_at.clone(),
-                    source: Source::Codex,
-                    channel: Some("cli".to_string()),
-                    model: None,
-                    tool_call_id: None,
-                    tool_name: None,
-                    tool_args: None,
-                    raw: None,
-                });
-            }
-        }
+        // 额外元数据收集
+        let mut session_metas: Vec<serde_json::Value> = Vec::new();
+        let mut turn_contexts: Vec<serde_json::Value> = Vec::new();
+        let mut git_info: Option<serde_json::Value> = None;
+        let mut cli_version: Option<String> = None;
 
-        for line in reader.lines().flatten() {
+        for line in reader.lines() {
+            let line = line?;
             if line.trim().is_empty() {
                 continue;
             }
 
-            let raw: serde_json::Value = match serde_json::from_str(&line) {
-                Ok(v) => v,
-                Err(_) => continue,
+            let Ok(event) = serde_json::from_str::<RolloutEvent>(&line) else {
+                continue;
             };
 
-            let event = raw.get("payload").unwrap_or(&raw);
-            let event_type = raw.get("type")
-                .or_else(|| event.get("type"))
-                .and_then(|t| t.as_str());
+            let event_type = event.event_type.as_deref();
+            let timestamp = event.timestamp.clone();
+
+            // 更新时间戳
+            if first_timestamp.is_none() {
+                first_timestamp = timestamp.clone();
+            }
+            last_timestamp = timestamp.clone();
 
             match event_type {
                 Some("session_meta") => {
-                    let session_meta = event.get("session_meta").unwrap_or(event);
-                    if cwd.is_none() {
-                        cwd = session_meta.get("cwd").and_then(|c| c.as_str()).map(String::from);
-                    }
-                    if model.is_none() {
-                        model = session_meta.get("model").and_then(|m| m.as_str()).map(String::from);
-                    }
-                    if created_at.is_none() {
-                        created_at = Self::parse_timestamp(session_meta.get("ts"));
+                    // 全量采集 session_meta
+                    if let Some(payload) = &event.payload {
+                        session_metas.push(payload.clone());
+
+                        if cwd.is_none() {
+                            cwd = payload.get("cwd").and_then(|v| v.as_str()).map(String::from);
+                        }
+                        if cli_version.is_none() {
+                            cli_version = payload.get("cli_version").and_then(|v| v.as_str()).map(String::from);
+                        }
+                        if git_info.is_none() {
+                            git_info = payload.get("git").cloned();
+                        }
                     }
                 }
-                // event_msg 包含真正的用户消息和助手回复
-                Some("event_msg") => {
-                    let msg_type = event.get("type").and_then(|t| t.as_str());
+                Some("turn_context") => {
+                    // 全量采集 turn_context
+                    if let Some(payload) = &event.payload {
+                        turn_contexts.push(payload.clone());
 
-                    match msg_type {
-                        Some("user_message") => {
-                            // 真正的用户消息
-                            if let Some(text) = event.get("message").and_then(|m| m.as_str()) {
-                                if !text.is_empty() {
-                                    let ts = Self::parse_timestamp(raw.get("timestamp"));
-                                    msg_seq += 1;
-                                    messages.push(ParsedMessage {
-                                        uuid: format!("{}:user:{}", meta.id, msg_seq),
-                                        session_id: meta.id.clone(),
-                                        message_type: MessageType::User,
-                                        content: ParsedContent {
-                                            text: text.to_string(),
-                                            full: text.to_string(),
-                                        },
-                                        timestamp: ts.clone(),
-                                        source: Source::Codex,
-                                        channel: Some("cli".to_string()),
-                                        model: None,
-                                        tool_call_id: None,
-                                        tool_name: None,
-                                        tool_args: None,
-                                        raw: None,
-                                    });
-                                    if created_at.is_none() {
-                                        created_at = ts;
-                                    }
-                                }
-                            }
+                        if cwd.is_none() {
+                            cwd = payload.get("cwd").and_then(|v| v.as_str()).map(String::from);
                         }
-                        Some("agent_message") => {
-                            // 真正的助手回复
-                            if let Some(text) = event.get("message").and_then(|m| m.as_str()) {
-                                if !text.is_empty() {
-                                    let ts = Self::parse_timestamp(raw.get("timestamp"));
-                                    updated_at = ts.clone().or(updated_at);
-                                    msg_seq += 1;
+                        if model.is_none() {
+                            model = payload.get("model").and_then(|v| v.as_str()).map(String::from);
+                        }
+                    }
+                }
+                Some("response_item") => {
+                    if let Some(payload) = &event.payload {
+                        let item_type = payload.get("type").and_then(|v| v.as_str());
+
+                        match item_type {
+                            Some("message") => {
+                                // 用户/助手消息
+                                let role = payload.get("role").and_then(|v| v.as_str());
+                                let content_text = Self::extract_content_text(payload);
+
+                                // 跳过空消息，但保留环境上下文（放入 meta）
+                                let is_env_context = content_text.contains("<environment_context>");
+
+                                let msg_type = match role {
+                                    Some("user") => MessageType::User,
+                                    Some("assistant") => MessageType::Assistant,
+                                    _ => MessageType::User,
+                                };
+
+                                let msg_id = payload.get("id")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from)
+                                    .unwrap_or_else(|| format!("{}:{}:{}", meta.id, role.unwrap_or("msg"), sequence));
+
+                                // 环境上下文消息：text 为空（不向量化），full 保留完整内容
+                                let (text, full) = if is_env_context {
+                                    (String::new(), content_text.clone())
+                                } else {
+                                    (content_text.clone(), content_text.clone())
+                                };
+
+                                if !full.is_empty() || is_env_context {
                                     messages.push(ParsedMessage {
-                                        uuid: format!("{}:assistant:{}", meta.id, msg_seq),
+                                        uuid: msg_id,
                                         session_id: meta.id.clone(),
-                                        message_type: MessageType::Assistant,
-                                        content: ParsedContent {
-                                            text: text.to_string(),
-                                            full: text.to_string(),
-                                        },
-                                        timestamp: ts,
+                                        message_type: msg_type,
+                                        content: ParsedContent { text, full },
+                                        timestamp: timestamp.clone(),
                                         source: Source::Codex,
                                         channel: Some("cli".to_string()),
                                         model: model.clone(),
                                         tool_call_id: None,
                                         tool_name: None,
                                         tool_args: None,
-                                        raw: None,
+                                        raw: Some(line.clone()),
+                                        cwd: cwd.clone(),
+                                        stop_reason: None,
                                     });
+                                    sequence += 1;
+                                }
+                            }
+                            Some("reasoning") => {
+                                // 推理过程 - 提取 summary 文本，encrypted_content 存 meta
+                                let summary_text = payload.get("summary")
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+                                            .collect::<Vec<_>>()
+                                            .join("\n")
+                                    })
+                                    .unwrap_or_default();
+
+                                // encrypted_content 已存入 raw 字段，无需额外处理
+                                messages.push(ParsedMessage {
+                                    uuid: format!("{}:reasoning:{}", meta.id, sequence),
+                                    session_id: meta.id.clone(),
+                                    message_type: MessageType::Assistant,
+                                    content: ParsedContent {
+                                        text: String::new(), // reasoning 不做向量化
+                                        full: format!("[Reasoning]\n{}", summary_text),
+                                    },
+                                    timestamp: timestamp.clone(),
+                                    source: Source::Codex,
+                                    channel: Some("cli".to_string()),
+                                    model: model.clone(),
+                                    tool_call_id: None,
+                                    tool_name: Some("reasoning".to_string()),
+                                    tool_args: None,
+                                    raw: Some(line.clone()),
+                                    cwd: cwd.clone(),
+                                    stop_reason: None,
+                                });
+                                sequence += 1;
+                            }
+                            Some("function_call") => {
+                                // 标准函数调用
+                                let name = payload.get("name").and_then(|v| v.as_str());
+                                let call_id = payload.get("call_id").and_then(|v| v.as_str());
+                                let arguments = payload.get("arguments").and_then(|v| v.as_str());
+
+                                messages.push(ParsedMessage {
+                                    uuid: call_id.map(String::from).unwrap_or_else(|| format!("{}:func:{}", meta.id, sequence)),
+                                    session_id: meta.id.clone(),
+                                    message_type: MessageType::Assistant,
+                                    content: ParsedContent {
+                                        text: String::new(),
+                                        full: format!("[Function: {}]", name.unwrap_or("unknown")),
+                                    },
+                                    timestamp: timestamp.clone(),
+                                    source: Source::Codex,
+                                    channel: Some("cli".to_string()),
+                                    model: model.clone(),
+                                    tool_call_id: call_id.map(String::from),
+                                    tool_name: name.map(String::from),
+                                    tool_args: arguments.map(String::from),
+                                    raw: Some(line.clone()),
+                                    cwd: cwd.clone(),
+                                    stop_reason: None,
+                                });
+                                sequence += 1;
+                            }
+                            Some("function_call_output") => {
+                                // 函数输出
+                                let output = payload.get("output").and_then(|v| v.as_str()).unwrap_or("");
+                                let call_id = payload.get("call_id").and_then(|v| v.as_str());
+
+                                messages.push(ParsedMessage {
+                                    uuid: format!("{}:func_out:{}", meta.id, sequence),
+                                    session_id: meta.id.clone(),
+                                    message_type: MessageType::Tool,
+                                    content: ParsedContent {
+                                        text: String::new(),
+                                        full: output.to_string(),
+                                    },
+                                    timestamp: timestamp.clone(),
+                                    source: Source::Codex,
+                                    channel: Some("cli".to_string()),
+                                    model: None,
+                                    tool_call_id: call_id.map(String::from),
+                                    tool_name: None,
+                                    tool_args: None,
+                                    raw: Some(line.clone()),
+                                    cwd: cwd.clone(),
+                                    stop_reason: None,
+                                });
+                                sequence += 1;
+                            }
+                            Some("custom_tool_call") => {
+                                // 自定义工具调用
+                                let name = payload.get("name").and_then(|v| v.as_str());
+                                let call_id = payload.get("id").and_then(|v| v.as_str());
+                                let arguments = payload.get("arguments")
+                                    .map(|v| v.to_string());
+
+                                messages.push(ParsedMessage {
+                                    uuid: call_id.map(String::from).unwrap_or_else(|| format!("{}:custom:{}", meta.id, sequence)),
+                                    session_id: meta.id.clone(),
+                                    message_type: MessageType::Assistant,
+                                    content: ParsedContent {
+                                        text: String::new(),
+                                        full: format!("[CustomTool: {}]", name.unwrap_or("unknown")),
+                                    },
+                                    timestamp: timestamp.clone(),
+                                    source: Source::Codex,
+                                    channel: Some("cli".to_string()),
+                                    model: model.clone(),
+                                    tool_call_id: call_id.map(String::from),
+                                    tool_name: name.map(String::from),
+                                    tool_args: arguments,
+                                    raw: Some(line.clone()),
+                                    cwd: cwd.clone(),
+                                    stop_reason: None,
+                                });
+                                sequence += 1;
+                            }
+                            Some("custom_tool_call_output") => {
+                                // 自定义工具输出
+                                let output = payload.get("output")
+                                    .map(|v| if v.is_string() { v.as_str().unwrap_or("").to_string() } else { v.to_string() })
+                                    .unwrap_or_default();
+                                let call_id = payload.get("id").and_then(|v| v.as_str());
+
+                                messages.push(ParsedMessage {
+                                    uuid: format!("{}:custom_out:{}", meta.id, sequence),
+                                    session_id: meta.id.clone(),
+                                    message_type: MessageType::Tool,
+                                    content: ParsedContent {
+                                        text: String::new(),
+                                        full: output,
+                                    },
+                                    timestamp: timestamp.clone(),
+                                    source: Source::Codex,
+                                    channel: Some("cli".to_string()),
+                                    model: None,
+                                    tool_call_id: call_id.map(String::from),
+                                    tool_name: None,
+                                    tool_args: None,
+                                    raw: Some(line.clone()),
+                                    cwd: cwd.clone(),
+                                    stop_reason: None,
+                                });
+                                sequence += 1;
+                            }
+                            Some("ghost_snapshot") => {
+                                // 快照 - 存入 meta
+                                messages.push(ParsedMessage {
+                                    uuid: format!("{}:snapshot:{}", meta.id, sequence),
+                                    session_id: meta.id.clone(),
+                                    message_type: MessageType::Assistant,
+                                    content: ParsedContent {
+                                        text: String::new(),
+                                        full: "[GhostSnapshot]".to_string(),
+                                    },
+                                    timestamp: timestamp.clone(),
+                                    source: Source::Codex,
+                                    channel: Some("cli".to_string()),
+                                    model: model.clone(),
+                                    tool_call_id: None,
+                                    tool_name: Some("ghost_snapshot".to_string()),
+                                    tool_args: None,
+                                    raw: Some(line.clone()),
+                                    cwd: cwd.clone(),
+                                    stop_reason: None,
+                                });
+                                sequence += 1;
+                            }
+                            _ => {
+                                // 未知类型 - 仍然保存，存入 raw
+                                if let Some(item_type_str) = item_type {
+                                    tracing::debug!("未知 response_item 类型: {}", item_type_str);
+                                    messages.push(ParsedMessage {
+                                        uuid: format!("{}:unknown:{}", meta.id, sequence),
+                                        session_id: meta.id.clone(),
+                                        message_type: MessageType::Assistant,
+                                        content: ParsedContent {
+                                            text: String::new(),
+                                            full: format!("[Unknown: {}]", item_type_str),
+                                        },
+                                        timestamp: timestamp.clone(),
+                                        source: Source::Codex,
+                                        channel: Some("cli".to_string()),
+                                        model: model.clone(),
+                                        tool_call_id: None,
+                                        tool_name: Some(item_type_str.to_string()),
+                                        tool_args: None,
+                                        raw: Some(line.clone()),
+                                        cwd: cwd.clone(),
+                                        stop_reason: None,
+                                    });
+                                    sequence += 1;
                                 }
                             }
                         }
-                        _ => {}
                     }
                 }
-                // response_item 只处理 function_call (跳过 message 和 reasoning，它们是重复/中间状态)
-                Some("response_item") => {
-                    let item = event.get("response_item").unwrap_or(event);
-                    let item_type = item.get("type")
-                        .or_else(|| item.get("kind"))
-                        .and_then(|t| t.as_str());
+                Some("compacted") => {
+                    // 上下文压缩摘要 - 重要信息，作为系统消息保存
+                    if let Some(payload) = &event.payload {
+                        let message = payload.get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
 
-                    if matches!(item_type, Some("function_call") | Some("custom_tool_call")) {
-                        let tool = item.get("tool_call")
-                            .or_else(|| item.get("function_call"))
-                            .or_else(|| item.get("custom_tool_call"))
-                            .unwrap_or(item);
-
-                        let tool_name = tool.get("name")
-                            .or_else(|| tool.get("function_name"))
-                            .and_then(|n| n.as_str())
-                            .unwrap_or("unknown");
-
-                        msg_seq += 1;
-                        let uuid = tool.get("id")
-                            .and_then(|i| i.as_str())
-                            .map(String::from)
-                            .unwrap_or_else(|| format!("{}:tool:{}", meta.id, msg_seq));
-
-                        let ts = Self::parse_timestamp(raw.get("timestamp"));
-                        updated_at = ts.clone().or(updated_at);
-
-                        // Tool 调用不参与向量化，只放在 full
-                        let tool_content = format!("[Tool: {}] {}", tool_name,
-                            tool.get("arguments").map(|a| a.to_string()).unwrap_or_default());
-
-                        messages.push(ParsedMessage {
-                            uuid: uuid.clone(),
-                            session_id: meta.id.clone(),
-                            message_type: MessageType::Tool,
-                            content: ParsedContent {
-                                text: String::new(),
-                                full: tool_content,
-                            },
-                            timestamp: ts,
-                            source: Source::Codex,
-                            channel: Some("cli".to_string()),
-                            model: model.clone(),
-                            tool_call_id: Some(uuid),
-                            tool_name: Some(tool_name.to_string()),
-                            tool_args: tool.get("arguments").map(|a| a.to_string()),
-                            raw: Some(tool.to_string()),
-                        });
+                        if !message.is_empty() {
+                            messages.push(ParsedMessage {
+                                uuid: format!("{}:compacted:{}", meta.id, sequence),
+                                session_id: meta.id.clone(),
+                                message_type: MessageType::Assistant,
+                                content: ParsedContent {
+                                    text: String::new(), // compacted 不做向量化
+                                    full: format!("[Compacted Summary]\n{}", message),
+                                },
+                                timestamp: timestamp.clone(),
+                                source: Source::Codex,
+                                channel: Some("cli".to_string()),
+                                model: model.clone(),
+                                tool_call_id: None,
+                                tool_name: Some("compacted".to_string()),
+                                tool_args: None,
+                                raw: Some(line.clone()),
+                                cwd: cwd.clone(),
+                                stop_reason: None,
+                            });
+                            sequence += 1;
+                        }
                     }
-                    // 跳过 message 和 reasoning (它们是中间状态或与 event_msg 重复)
                 }
-                Some("tool_output") | Some("tool_call_output") => {
-                    let tool_output = event.get("tool_output")
-                        .or_else(|| event.get("tool_call_output"))
-                        .or_else(|| event.get("output"))
-                        .unwrap_or(event);
-
-                    let output_text = if tool_output.is_string() {
-                        tool_output.as_str().unwrap_or("").to_string()
-                    } else {
-                        tool_output.get("text")
-                            .and_then(|t| t.as_str())
-                            .map(String::from)
-                            .unwrap_or_else(|| tool_output.to_string())
-                    };
-
-                    msg_seq += 1;
-                    let uuid = tool_output.get("id")
-                        .and_then(|i| i.as_str())
-                        .map(String::from)
-                        .unwrap_or_else(|| format!("{}:result:{}", meta.id, msg_seq));
-
-                    let ts = Self::parse_timestamp(tool_output.get("ts"));
-                    updated_at = ts.clone().or(updated_at);
-
-                    // Tool 输出不参与向量化，只放在 full
-                    messages.push(ParsedMessage {
-                        uuid,
-                        session_id: meta.id.clone(),
-                        message_type: MessageType::Tool,
-                        content: ParsedContent {
-                            text: String::new(),
-                            full: format!("[Result] {}", output_text),
-                        },
-                        timestamp: ts,
-                        source: Source::Codex,
-                        channel: Some("cli".to_string()),
-                        model: None,
-                        tool_call_id: tool_output.get("call_id")
-                            .or_else(|| tool_output.get("tool_call_id"))
-                            .and_then(|i| i.as_str())
-                            .map(String::from),
-                        tool_name: None,
-                        tool_args: None,
-                        raw: if tool_output.is_string() { None } else { Some(tool_output.to_string()) },
-                    });
+                // event_msg 不单独处理，因为 response_item 已经包含完整信息
+                Some("event_msg") => {
+                    // 跳过，避免重复
                 }
-                _ => {}
+                _ => {
+                    // 其他未知事件类型，记录日志
+                    if let Some(et) = event_type {
+                        tracing::debug!("跳过未知事件类型: {}", et);
+                    }
+                }
             }
         }
 
+        // 构建会话级元数据
+        let result_meta = serde_json::json!({
+            "cli_version": cli_version,
+            "git": git_info,
+            "session_meta_count": session_metas.len(),
+            "turn_context_count": turn_contexts.len(),
+        });
+
         Ok(ParseResult {
             messages,
-            created_at,
-            updated_at,
+            created_at: first_timestamp,
+            updated_at: last_timestamp,
             cwd,
             model,
-            meta: Some(serde_json::Value::Object(meta_bag)),
+            meta: Some(result_meta),
         })
     }
 }
 
 impl ConversationAdapter for CodexAdapter {
-    fn source(&self) -> Source {
-        Source::Codex
+    fn meta(&self) -> &'static AdapterMeta {
+        &CODEX_META
+    }
+
+    fn data_path(&self) -> &Path {
+        &self.data_path
     }
 
     fn list_sessions(&self) -> Result<Vec<SessionMeta>> {
         let mut results = Vec::new();
-
         let history_path = self.history_path();
+
         if !history_path.exists() {
-            tracing::debug!("Codex history 文件不存在: {:?}", history_path);
+            tracing::warn!("Codex history.jsonl 不存在: {:?}", history_path);
             return Ok(results);
         }
 
-        let file = File::open(&history_path)?;
+        let file = fs::File::open(&history_path)?;
         let reader = BufReader::new(file);
 
-        for line in reader.lines().flatten() {
+        for line in reader.lines() {
+            let line = line?;
             if line.trim().is_empty() {
                 continue;
             }
 
-            let entry: HistoryEntry = match serde_json::from_str(&line) {
-                Ok(e) => e,
-                Err(_) => continue,
+            let Ok(entry) = serde_json::from_str::<HistoryEntry>(&line) else {
+                continue;
             };
 
-            if entry.session_id.is_empty() {
-                continue;
-            }
+            let ts_ms = Self::parse_timestamp(&entry.ts);
+            let session_path = self.resolve_session_path(&entry.session_id, ts_ms);
 
-            // 解析时间戳
-            let ts_str = entry.ts.map(|t| t.to_string());
-            let created_at = Self::parse_timestamp(Some(&serde_json::Value::from(entry.ts.unwrap_or(0.0))));
+            // 从 rollout 文件提取 cwd
+            let cwd = session_path.as_ref()
+                .and_then(|p| Self::extract_cwd_from_rollout(p));
 
-            // 查找 rollout 文件
-            let session_path = self.resolve_session_path(ts_str.as_deref(), &entry.session_id);
+            let project_path = cwd.clone()
+                .unwrap_or_else(|| self.sessions_root().to_string_lossy().to_string());
+            let project_name = Self::extract_project_name(&project_path);
 
             // 获取文件元数据
             let (file_mtime, file_size) = session_path.as_ref()
                 .and_then(|p| fs::metadata(p).ok())
-                .map(|meta| {
-                    let mtime = meta.modified().ok()
+                .map(|m| {
+                    let mtime = m.modified().ok()
                         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                         .map(|d| d.as_millis() as u64);
-                    (mtime, Some(meta.len()))
+                    (mtime, Some(m.len()))
                 })
                 .unwrap_or((None, None));
 
-            // 从 rollout 文件提取 cwd
-            let project_path = session_path.as_ref()
-                .and_then(|p| self.extract_project_path(p))
-                .unwrap_or_else(|| self.codex_path.to_string_lossy().to_string());
-
-            let mut meta_map = serde_json::Map::new();
-            if let Some(text) = &entry.text {
-                meta_map.insert("historyText".to_string(), serde_json::Value::String(text.clone()));
-            }
-            if let Some(ts) = entry.ts {
-                meta_map.insert("historyTs".to_string(), serde_json::Value::from(ts));
-            }
-
-            // 统计 rollout 文件中的消息数（简化：使用事件数估算）
-            let message_count = session_path
-                .as_ref()
-                .and_then(|p| Self::count_rollout_events(p));
+            let timestamp = Self::format_timestamp(&entry.ts);
 
             results.push(SessionMeta {
-                id: entry.session_id,
+                id: entry.session_id.clone(),
                 source: Source::Codex,
                 channel: Some("cli".to_string()),
                 project_path,
-                project_name: None,
+                project_name: Some(project_name),
                 encoded_dir_name: None,
                 session_path: session_path.map(|p| p.to_string_lossy().to_string()),
                 file_mtime,
                 file_size,
-                message_count,
-                cwd: None,
+                message_count: None,
+                cwd,
                 model: None,
-                meta: Some(serde_json::Value::Object(meta_map)),
-                created_at: created_at.clone(),
-                updated_at: created_at,
+                meta: entry.text.map(|t| serde_json::json!({
+                    "historyText": t,
+                    "historyTs": entry.ts
+                })),
+                created_at: timestamp.clone(),
+                updated_at: timestamp,
             });
         }
 
@@ -473,101 +799,36 @@ impl ConversationAdapter for CodexAdapter {
             return Ok(None);
         }
 
-        let result = self.parse_rollout_file(meta)?;
+        let session_path = Path::new(meta.session_path.as_ref().unwrap());
+        if !session_path.exists() {
+            tracing::debug!("Codex session 文件不存在: {:?}", session_path);
+            return Ok(None);
+        }
+
+        let result = self.parse_rollout(meta)?;
         Ok(Some(result))
     }
 }
 
-// ==================== History JSONL 数据结构 ====================
-
-#[derive(Debug, Deserialize)]
-struct HistoryEntry {
-    session_id: String,
-    ts: Option<f64>,
-    text: Option<String>,
-}
-
-// ==================== 单元测试 ====================
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
-    fn test_parse_timestamp_millis_number() {
-        // 毫秒数字
-        let ts = json!(1697506170935_i64);
-        let result = CodexAdapter::parse_timestamp(Some(&ts));
-        assert_eq!(result, Some("1697506170935".to_string()));
+    fn test_parse_timestamp_millis() {
+        let ts = serde_json::json!(1768452489295i64);
+        assert_eq!(CodexAdapter::parse_timestamp(&ts), Some(1768452489295));
     }
 
     #[test]
-    fn test_parse_timestamp_seconds_number() {
-        // 秒数字 (自动转毫秒)
-        let ts = json!(1697506170.935);
-        let result = CodexAdapter::parse_timestamp(Some(&ts));
-        assert_eq!(result, Some("1697506170935".to_string()));
+    fn test_parse_timestamp_seconds() {
+        let ts = serde_json::json!(1768452489);
+        assert_eq!(CodexAdapter::parse_timestamp(&ts), Some(1768452489000));
     }
 
     #[test]
-    fn test_parse_timestamp_millis_string() {
-        // 毫秒字符串
-        let ts = json!("1697506170935");
-        let result = CodexAdapter::parse_timestamp(Some(&ts));
-        assert_eq!(result, Some("1697506170935".to_string()));
-    }
-
-    #[test]
-    fn test_parse_timestamp_iso8601() {
-        // ISO 8601 格式 (rollout 文件格式)
-        let ts = json!("2025-10-17T01:49:30.935Z");
-        let result = CodexAdapter::parse_timestamp(Some(&ts));
-        assert!(result.is_some());
-        // 验证是毫秒时间戳格式
-        let millis: i64 = result.unwrap().parse().unwrap();
-        assert!(millis > 1700000000000); // 2023年之后
-    }
-
-    #[test]
-    fn test_parse_timestamp_iso8601_with_timezone() {
-        // ISO 8601 带时区
-        let ts = json!("2025-10-17T09:49:30.935+08:00");
-        let result = CodexAdapter::parse_timestamp(Some(&ts));
-        assert!(result.is_some());
-        let millis: i64 = result.unwrap().parse().unwrap();
-        assert!(millis > 1700000000000);
-    }
-
-    #[test]
-    fn test_parse_timestamp_none() {
-        let result = CodexAdapter::parse_timestamp(None);
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_parse_timestamp_invalid() {
-        // 无效格式
-        let ts = json!("not-a-timestamp");
-        let result = CodexAdapter::parse_timestamp(Some(&ts));
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_parse_timestamp_output_is_parseable_i64() {
-        // 确保输出可被 collector 的 parse::<i64>() 解析
-        let cases = vec![
-            json!(1697506170935_i64),
-            json!(1697506170.935),
-            json!("1697506170935"),
-            json!("2025-10-17T01:49:30.935Z"),
-        ];
-
-        for ts in cases {
-            let result = CodexAdapter::parse_timestamp(Some(&ts));
-            assert!(result.is_some(), "Failed for: {:?}", ts);
-            let parsed: Result<i64, _> = result.unwrap().parse();
-            assert!(parsed.is_ok(), "Output not parseable as i64 for: {:?}", ts);
-        }
+    fn test_parse_timestamp_string() {
+        let ts = serde_json::json!("1768452489295");
+        assert_eq!(CodexAdapter::parse_timestamp(&ts), Some(1768452489295));
     }
 }

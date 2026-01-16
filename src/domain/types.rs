@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 pub enum Source {
     Claude,
     Codex,
+    OpenCode,
 }
 
 impl std::fmt::Display for Source {
@@ -15,6 +16,7 @@ impl std::fmt::Display for Source {
         match self {
             Source::Claude => write!(f, "claude"),
             Source::Codex => write!(f, "codex"),
+            Source::OpenCode => write!(f, "opencode"),
         }
     }
 }
@@ -123,6 +125,12 @@ pub struct ParsedMessage {
     pub tool_args: Option<String>,
     /// 原始数据
     pub raw: Option<String>,
+
+    /// 工作目录
+    pub cwd: Option<String>,
+
+    /// 停止原因
+    pub stop_reason: Option<String>,
 }
 
 /// 适配器解析结果

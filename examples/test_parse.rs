@@ -13,7 +13,9 @@ fn main() {
     let thinking_file = "/Users/higuaifan/.claude/projects/-Users-higuaifan-Desktop-hi-----jarvis-samples/13519af9-186d-4406-8112-959afcc58158.jsonl";
     println!("📋 测试 thinking 解析:");
     if let Ok(Some(result)) = ClaudeAdapter::parse_session_from_path(thinking_file) {
-        let thinking_msgs: Vec<_> = result.messages.iter()
+        let thinking_msgs: Vec<_> = result
+            .messages
+            .iter()
             .filter(|m| m.content.full.contains("[Thinking]"))
             .take(1)
             .collect();
@@ -33,7 +35,7 @@ fn main() {
 
     println!("📂 Claude projects 路径: {:?}", claude_projects);
 
-    let claude = ClaudeAdapter::new(claude_projects);
+    let claude = ClaudeAdapter::with_path(claude_projects);
     match claude.list_sessions() {
         Ok(sessions) => {
             println!("✅ 找到 {} 个 Claude 会话\n", sessions.len());
@@ -52,7 +54,9 @@ fn main() {
                     println!("  CWD: {:?}", result.cwd);
 
                     // 显示包含 tool_use 的消息
-                    let tool_msgs: Vec<_> = result.messages.iter()
+                    let tool_msgs: Vec<_> = result
+                        .messages
+                        .iter()
                         .filter(|m| m.content.full.contains("[Tool:"))
                         .take(3)
                         .collect();
@@ -66,9 +70,20 @@ fn main() {
                     } else {
                         // 显示前 2 条消息
                         for (j, msg) in result.messages.iter().take(2).enumerate() {
-                            let content_preview: String = msg.content.full.chars().take(60).collect();
-                            let suffix = if msg.content.full.chars().count() > 60 { "..." } else { "" };
-                            println!("  [{}] {}: {}{}", j + 1, msg.message_type, content_preview, suffix);
+                            let content_preview: String =
+                                msg.content.full.chars().take(60).collect();
+                            let suffix = if msg.content.full.chars().count() > 60 {
+                                "..."
+                            } else {
+                                ""
+                            };
+                            println!(
+                                "  [{}] {}: {}{}",
+                                j + 1,
+                                msg.message_type,
+                                content_preview,
+                                suffix
+                            );
                         }
                     }
                 }
@@ -84,7 +99,7 @@ fn main() {
     let codex_path = PathBuf::from(&home).join(".codex");
     println!("\n📂 Codex 路径: {:?}", codex_path);
 
-    let codex = CodexAdapter::new(codex_path);
+    let codex = CodexAdapter::with_path(codex_path);
     match codex.list_sessions() {
         Ok(sessions) => {
             println!("✅ 找到 {} 个 Codex 会话", sessions.len());
