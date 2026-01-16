@@ -8,19 +8,58 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
-use super::ConversationAdapter;
-use crate::domain::{IndexableMessage, IndexableSession, MessageType, ParseResult, ParsedContent, ParsedMessage, SessionMeta, Source};
+use super::{AdapterMeta, ConversationAdapter};
+use crate::domain::{
+    IndexableMessage, IndexableSession, MessageType, ParseResult, ParsedContent, ParsedMessage,
+    SessionMeta, Source,
+};
+
+// ============================================================================
+// 适配器元信息（静态配置）
+// ============================================================================
+
+/// Claude Code 适配器元信息
+pub static CLAUDE_META: AdapterMeta = AdapterMeta {
+    source: Source::Claude,
+    name: "Claude Code",
+    default_path: ".claude/projects",
+    env_var: "CLAUDE_PROJECTS_PATH",
+    extensions: &["jsonl"],
+    recursive: true,
+};
+
+// ============================================================================
+// 适配器实现
+// ============================================================================
 
 /// Claude Code 适配器
 pub struct ClaudeAdapter {
     /// Claude projects 目录路径
-    projects_path: PathBuf,
+    data_path: PathBuf,
+}
+
+impl Default for ClaudeAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ClaudeAdapter {
-    /// 创建适配器
-    pub fn new(projects_path: PathBuf) -> Self {
-        Self { projects_path }
+    /// 创建适配器（使用默认路径或环境变量）
+    pub fn new() -> Self {
+        let path = std::env::var(CLAUDE_META.env_var)
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                dirs::home_dir()
+                    .unwrap_or_default()
+                    .join(CLAUDE_META.default_path)
+            });
+        Self { data_path: path }
+    }
+
+    /// 使用自定义路径创建适配器
+    pub fn with_path(path: PathBuf) -> Self {
+        Self { data_path: path }
     }
 
     /// 从路径提取项目名
@@ -34,14 +73,14 @@ impl ClaudeAdapter {
 
     /// 从 JSONL 文件路径直接解析会话（用于索引）
     ///
-    /// 从 JSONL 读取 cwd 获取真实项目路径，无 cwd 时使用 encoded_dir_name 占位
+    /// 从 JSONL 读取 cwd 获取真实项目路径
     ///
     /// # Arguments
     /// * `jsonl_path` - JSONL 文件完整路径
     ///
     /// # Returns
     /// * `Ok(Some(IndexableSession))` - 解析成功
-    /// * `Ok(None)` - 文件为空或无有效消息
+    /// * `Ok(None)` - 文件为空、无有效消息或无 cwd（空会话）
     /// * `Err` - 解析失败
     pub fn parse_session_from_path(jsonl_path: &str) -> Result<Option<IndexableSession>> {
         let path = Path::new(jsonl_path);
@@ -55,18 +94,18 @@ impl ClaudeAdapter {
             .and_then(|s| s.to_str())
             .ok_or_else(|| anyhow::anyhow!("无效的文件名"))?;
 
-        // 2. 从路径提取编码的目录名
-        let encoded_dir_name = path
-            .parent()
-            .and_then(|p| p.file_name())
-            .and_then(|s| s.to_str())
-            .unwrap_or("unknown");
+        // 2. 从 JSONL 读取 cwd
+        let cwd = match Self::read_cwd_from_jsonl(path) {
+            Some(cwd) => cwd,
+            None => {
+                // 无 cwd 表示空会话（没有 user 消息），跳过
+                tracing::debug!("空会话（无 cwd）: {}", jsonl_path);
+                return Ok(None);
+            }
+        };
 
-        // 3. 从 JSONL 读取 cwd（优先）
-        let cwd = Self::read_cwd_from_jsonl(path);
-
-        // 4. 确定正确的 project_path（无 cwd 时使用 encoded_dir_name 占位）
-        let project_path = cwd.unwrap_or_else(|| encoded_dir_name.to_string());
+        // 3. 确定 project_path 和 project_name
+        let project_path = cwd;
         let project_name = Self::extract_project_name(&project_path);
 
         // 5. 解析消息
@@ -88,14 +127,19 @@ impl ClaudeAdapter {
 
             // 只处理 message 类型
             let entry_type = entry.entry_type.as_deref();
-            if entry_type != Some("message") && entry_type != Some("user") && entry_type != Some("assistant") {
+            if entry_type != Some("message")
+                && entry_type != Some("user")
+                && entry_type != Some("assistant")
+            {
                 continue;
             }
 
             // 提取 UUID
-            let Some(uuid) = entry.uuid.clone().or_else(|| {
-                entry.message.as_ref()?.id.clone()
-            }) else {
+            let Some(uuid) = entry
+                .uuid
+                .clone()
+                .or_else(|| entry.message.as_ref()?.id.clone())
+            else {
                 continue;
             };
 
@@ -103,11 +147,11 @@ impl ClaudeAdapter {
             let role = match entry_type {
                 Some("user") => "user",
                 Some("assistant") => "assistant",
-                Some("message") => {
-                    entry.message.as_ref()
-                        .and_then(|m| m.role.as_deref())
-                        .unwrap_or("user")
-                }
+                Some("message") => entry
+                    .message
+                    .as_ref()
+                    .and_then(|m| m.role.as_deref())
+                    .unwrap_or("user"),
                 _ => continue,
             };
 
@@ -118,7 +162,8 @@ impl ClaudeAdapter {
             }
 
             // 解析时间戳
-            let timestamp = entry.timestamp
+            let timestamp = entry
+                .timestamp
                 .as_ref()
                 .and_then(|s| Self::parse_timestamp(s))
                 .unwrap_or_else(|| {
@@ -200,14 +245,20 @@ impl ClaudeAdapter {
             Some("tool_use") => {
                 // tool_use: 只在 full 中，不参与向量化
                 let name = block.name.as_deref().unwrap_or("unknown");
-                let input = block.input.as_ref()
+                let input = block
+                    .input
+                    .as_ref()
                     .map(|v| serde_json::to_string(v).unwrap_or_default())
                     .unwrap_or_default();
                 (None, Some(format!("[Tool: {}] {}", name, input)))
             }
             Some("tool_result") => {
                 // tool_result: 只在 full 中，不参与向量化
-                let error_tag = if block.is_error == Some(true) { " Error" } else { "" };
+                let error_tag = if block.is_error == Some(true) {
+                    " Error"
+                } else {
+                    ""
+                };
                 let content = match &block.content {
                     Some(serde_json::Value::String(s)) => s.clone(),
                     Some(v) => serde_json::to_string(v).unwrap_or_default(),
@@ -236,26 +287,23 @@ impl ClaudeAdapter {
         None
     }
 
-    /// 从 JSONL 文件快速读取 cwd（跳过 summary 等非消息行）
+    /// 从 JSONL 文件提取 cwd
+    ///
+    /// 策略：找第一条 type="user" 的消息，读取其 cwd 字段
+    /// 所有 user 消息都包含 cwd，且 cwd 值在同一会话中保持一致
     fn read_cwd_from_jsonl(file_path: &Path) -> Option<String> {
         let file = File::open(file_path).ok()?;
         let reader = BufReader::new(file);
 
-        // 读取前 50 行，跳过 summary/file-history-snapshot 等非消息行
-        for line in reader.lines().take(50) {
-            if let Ok(line) = line {
-                if line.trim().is_empty() {
-                    continue;
-                }
-                if let Ok(entry) = serde_json::from_str::<JsonlEntry>(&line) {
-                    // 跳过非消息类型
-                    let entry_type = entry.entry_type.as_deref();
-                    if matches!(entry_type, Some("summary") | Some("file-history-snapshot")) {
-                        continue;
-                    }
-                    if let Some(cwd) = entry.cwd {
-                        return Some(cwd);
-                    }
+        for line in reader.lines() {
+            let line = line.ok()?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Ok(entry) = serde_json::from_str::<JsonlEntry>(&line) {
+                // 找到第一条 type="user" 的消息
+                if entry.entry_type.as_deref() == Some("user") {
+                    return entry.cwd;
                 }
             }
         }
@@ -267,18 +315,18 @@ impl ClaudeAdapter {
     fn count_jsonl_lines(file_path: &Path) -> Option<usize> {
         let file = File::open(file_path).ok()?;
         let reader = BufReader::new(file);
-        let count = reader.lines().filter_map(|l| l.ok()).filter(|l| !l.trim().is_empty()).count();
+        let count = reader
+            .lines()
+            .filter_map(|l| l.ok())
+            .filter(|l| !l.trim().is_empty())
+            .count();
         Some(count)
     }
 
     /// 解析单个 JSONL 文件
-    fn parse_jsonl_file(
-        &self,
-        file_path: &Path,
-        session_id: &str,
-    ) -> Result<ParseResult> {
-        let file = File::open(file_path)
-            .with_context(|| format!("无法打开文件: {:?}", file_path))?;
+    fn parse_jsonl_file(&self, file_path: &Path, session_id: &str) -> Result<ParseResult> {
+        let file =
+            File::open(file_path).with_context(|| format!("无法打开文件: {:?}", file_path))?;
         let reader = BufReader::new(file);
 
         let mut messages = Vec::new();
@@ -329,7 +377,12 @@ impl ClaudeAdapter {
     }
 
     /// 转换单条消息
-    fn convert_entry(&self, entry: &JsonlEntry, session_id: &str, raw_line: &str) -> Option<ParsedMessage> {
+    fn convert_entry(
+        &self,
+        entry: &JsonlEntry,
+        session_id: &str,
+        raw_line: &str,
+    ) -> Option<ParsedMessage> {
         let entry_type = entry.entry_type.as_deref()?;
 
         // 跳过 summary 类型
@@ -365,6 +418,8 @@ impl ClaudeAdapter {
             tool_name: extracted.tool_name,
             tool_args: extracted.tool_args,
             raw: Some(raw_line.to_string()),
+            cwd: entry.cwd.clone(),
+            stop_reason: None,
         })
     }
 
@@ -482,7 +537,9 @@ impl ClaudeAdapter {
                     if block.block_type.as_deref() == Some("tool_use") {
                         tool_call_id = block.id.clone();
                         tool_name = block.name.clone();
-                        tool_args = block.input.as_ref()
+                        tool_args = block
+                            .input
+                            .as_ref()
                             .map(|v| serde_json::to_string(v).unwrap_or_default());
                     }
                 }
@@ -507,20 +564,24 @@ impl ClaudeAdapter {
 }
 
 impl ConversationAdapter for ClaudeAdapter {
-    fn source(&self) -> Source {
-        Source::Claude
+    fn meta(&self) -> &'static AdapterMeta {
+        &CLAUDE_META
+    }
+
+    fn data_path(&self) -> &Path {
+        &self.data_path
     }
 
     fn list_sessions(&self) -> Result<Vec<SessionMeta>> {
         let mut results = Vec::new();
 
-        if !self.projects_path.exists() {
-            tracing::warn!("Claude projects 目录不存在: {:?}", self.projects_path);
+        if !self.data_path.exists() {
+            tracing::warn!("Claude projects 目录不存在: {:?}", self.data_path);
             return Ok(results);
         }
 
         // 遍历项目目录
-        for entry in fs::read_dir(&self.projects_path)? {
+        for entry in fs::read_dir(&self.data_path)? {
             let entry = entry?;
             let project_dir = entry.path();
 
@@ -579,16 +640,20 @@ impl ConversationAdapter for ClaudeAdapter {
                 // 快速统计消息数量（JSONL 行数）
                 let message_count = Self::count_jsonl_lines(&file_path);
 
-                // 优先使用 cwd，无则使用 encoded_name 占位
-                let actual_project_path = cwd.clone().unwrap_or_else(|| encoded_name.to_string());
-                let actual_project_name = Self::extract_project_name(&actual_project_path);
+                // project_path 使用 cwd，空会话时留空（由调用方处理 fallback）
+                let project_path = cwd.clone().unwrap_or_default();
+                let project_name = if project_path.is_empty() {
+                    None
+                } else {
+                    Some(Self::extract_project_name(&project_path))
+                };
 
                 results.push(SessionMeta {
                     id: session_id.to_string(),
                     source: Source::Claude,
                     channel: Some("code".to_string()),
-                    project_path: actual_project_path,
-                    project_name: Some(actual_project_name),
+                    project_path,
+                    project_name,
                     encoded_dir_name: Some(encoded_name.to_string()),
                     session_path: Some(file_path.to_string_lossy().to_string()),
                     file_mtime,
@@ -687,4 +752,75 @@ struct ContentBlock {
     is_error: Option<bool>,
     // thinking block
     thinking: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_read_cwd_from_jsonl_user_message() {
+        // 创建临时文件，模拟真实的 JSONL 格式
+        let mut file = NamedTempFile::new().unwrap();
+
+        // 写入模拟数据：summary 消息没有 cwd，user 消息有 cwd
+        writeln!(file, r#"{{"uuid":"0001","type":"summary","message":{{"role":"assistant","content":"summary"}}}}"#).unwrap();
+        writeln!(file, r#"{{"uuid":"0002","type":"user","cwd":"/Users/test/project","message":{{"role":"user","content":"hello"}}}}"#).unwrap();
+        writeln!(file, r#"{{"uuid":"0003","type":"assistant","message":{{"role":"assistant","content":"hi"}}}}"#).unwrap();
+        file.flush().unwrap();
+
+        let cwd = ClaudeAdapter::read_cwd_from_jsonl(file.path());
+        assert_eq!(cwd, Some("/Users/test/project".to_string()));
+    }
+
+    #[test]
+    fn test_read_cwd_from_jsonl_user_first_line() {
+        // user 消息在第一行
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"uuid":"0001","type":"user","cwd":"/home/user/code","message":{{"role":"user","content":"test"}}}}"#).unwrap();
+        file.flush().unwrap();
+
+        let cwd = ClaudeAdapter::read_cwd_from_jsonl(file.path());
+        assert_eq!(cwd, Some("/home/user/code".to_string()));
+    }
+
+    #[test]
+    fn test_read_cwd_from_jsonl_no_user_message() {
+        // 没有 user 消息
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"uuid":"0001","type":"summary","message":{{"role":"assistant","content":"test"}}}}"#).unwrap();
+        writeln!(file, r#"{{"uuid":"0002","type":"assistant","message":{{"role":"assistant","content":"test2"}}}}"#).unwrap();
+        file.flush().unwrap();
+
+        let cwd = ClaudeAdapter::read_cwd_from_jsonl(file.path());
+        assert_eq!(cwd, None);
+    }
+
+    #[test]
+    fn test_read_cwd_from_jsonl_empty_file() {
+        let file = NamedTempFile::new().unwrap();
+        let cwd = ClaudeAdapter::read_cwd_from_jsonl(file.path());
+        assert_eq!(cwd, None);
+    }
+
+    #[test]
+    fn test_read_cwd_from_jsonl_user_without_cwd() {
+        // user 消息存在但没有 cwd 字段（理论上不应该发生）
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"uuid":"0001","type":"user","message":{{"role":"user","content":"hello"}}}}"#).unwrap();
+        file.flush().unwrap();
+
+        let cwd = ClaudeAdapter::read_cwd_from_jsonl(file.path());
+        assert_eq!(cwd, None);
+    }
+
+    #[test]
+    fn test_extract_project_name() {
+        assert_eq!(ClaudeAdapter::extract_project_name("/Users/xxx/project"), "project");
+        assert_eq!(ClaudeAdapter::extract_project_name("/a/b/c/deep/path"), "path");
+        assert_eq!(ClaudeAdapter::extract_project_name("/single"), "single");
+        assert_eq!(ClaudeAdapter::extract_project_name("nopath"), "nopath");
+    }
 }
