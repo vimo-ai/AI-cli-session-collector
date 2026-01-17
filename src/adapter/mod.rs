@@ -4,6 +4,7 @@
 //! - Claude Code (JSONL)
 //! - Codex CLI (history.jsonl + rollout)
 //! - OpenCode (JSON)
+//! - Gemini CLI (session JSON)
 //!
 //! ## 架构设计
 //!
@@ -23,10 +24,12 @@
 
 mod claude;
 mod codex;
+mod gemini;
 mod opencode;
 
 pub use claude::ClaudeAdapter;
 pub use codex::CodexAdapter;
+pub use gemini::GeminiAdapter;
 pub use opencode::OpenCodeAdapter;
 
 use crate::domain::{ParseResult, SessionMeta, Source};
@@ -118,6 +121,7 @@ pub fn all_adapters() -> Vec<Arc<dyn ConversationAdapter>> {
         Arc::new(ClaudeAdapter::new()),
         Arc::new(CodexAdapter::new()),
         Arc::new(OpenCodeAdapter::new()),
+        Arc::new(GeminiAdapter::new()),
     ]
 }
 

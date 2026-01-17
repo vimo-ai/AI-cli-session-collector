@@ -9,6 +9,7 @@ pub enum Source {
     Claude,
     Codex,
     OpenCode,
+    Gemini,
 }
 
 impl std::fmt::Display for Source {
@@ -17,6 +18,7 @@ impl std::fmt::Display for Source {
             Source::Claude => write!(f, "claude"),
             Source::Codex => write!(f, "codex"),
             Source::OpenCode => write!(f, "opencode"),
+            Source::Gemini => write!(f, "gemini"),
         }
     }
 }
