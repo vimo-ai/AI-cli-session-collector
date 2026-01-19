@@ -223,13 +223,13 @@ impl CodexAdapter {
         // 优先在日期目录查找
         if let Some(ts_ms) = ts {
             let day_dir = self.get_date_dir(ts_ms);
-            if day_dir.exists() {
-                if let Ok(entries) = fs::read_dir(&day_dir) {
-                    for entry in entries.flatten() {
-                        let name = entry.file_name().to_string_lossy().to_string();
-                        if name.contains(session_id) {
-                            return Some(entry.path());
-                        }
+            if day_dir.exists()
+                && let Ok(entries) = fs::read_dir(&day_dir)
+            {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.contains(session_id) {
+                        return Some(entry.path());
                     }
                 }
             }
@@ -276,12 +276,11 @@ impl CodexAdapter {
                 let event_type = event.event_type.as_deref();
 
                 // session_meta 或 turn_context 都可能有 cwd
-                if matches!(event_type, Some("session_meta") | Some("turn_context")) {
-                    if let Some(payload) = &event.payload {
-                        if let Some(cwd) = payload.get("cwd").and_then(|v| v.as_str()) {
-                            return Some(cwd.to_string());
-                        }
-                    }
+                if matches!(event_type, Some("session_meta") | Some("turn_context"))
+                    && let Some(payload) = &event.payload
+                    && let Some(cwd) = payload.get("cwd").and_then(|v| v.as_str())
+                {
+                    return Some(cwd.to_string());
                 }
             }
         }
@@ -291,8 +290,7 @@ impl CodexAdapter {
     /// 从路径提取项目名
     fn extract_project_name(path: &str) -> String {
         path.split('/')
-            .filter(|s| !s.is_empty())
-            .last()
+            .rfind(|s| !s.is_empty())
             .unwrap_or(path)
             .to_string()
     }

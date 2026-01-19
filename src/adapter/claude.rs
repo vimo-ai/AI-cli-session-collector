@@ -65,8 +65,7 @@ impl ClaudeAdapter {
     /// 从路径提取项目名
     pub fn extract_project_name(path: &str) -> String {
         path.split('/')
-            .filter(|s| !s.is_empty())
-            .last()
+            .rfind(|s| !s.is_empty())
             .unwrap_or(path)
             .to_string()
     }
@@ -317,7 +316,7 @@ impl ClaudeAdapter {
         let reader = BufReader::new(file);
         let count = reader
             .lines()
-            .filter_map(|l| l.ok())
+            .map_while(|l| l.ok())
             .filter(|l| !l.trim().is_empty())
             .count();
         Some(count)
@@ -484,12 +483,12 @@ impl ClaudeAdapter {
 
     /// 检查内容中是否包含 tool_result
     fn has_tool_result_in_content(&self, entry: &JsonlEntry) -> bool {
-        if let Some(message) = &entry.message {
-            if let Some(ContentValue::Blocks(blocks)) = &message.content {
-                for block in blocks {
-                    if block.block_type.as_deref() == Some("tool_result") {
-                        return true;
-                    }
+        if let Some(message) = &entry.message
+            && let Some(ContentValue::Blocks(blocks)) = &message.content
+        {
+            for block in blocks {
+                if block.block_type.as_deref() == Some("tool_result") {
+                    return true;
                 }
             }
         }

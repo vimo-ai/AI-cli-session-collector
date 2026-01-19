@@ -211,8 +211,7 @@ impl OpenCodeAdapter {
     /// 从路径提取项目名
     fn extract_project_name(path: &str) -> String {
         path.split('/')
-            .filter(|s| !s.is_empty())
-            .last()
+            .rfind(|s| !s.is_empty())
             .unwrap_or(path)
             .to_string()
     }
@@ -230,13 +229,13 @@ impl OpenCodeAdapter {
                 }
                 "tool" => {
                     let tool_name = part.tool.clone();
-                    if let Some(state) = &part.state {
-                        if let Some(_input) = &state.input {
-                            full_parts.push(format!(
-                                "[Tool: {}]",
-                                tool_name.as_deref().unwrap_or("unknown")
-                            ));
-                        }
+                    if let Some(state) = &part.state
+                        && state.input.is_some()
+                    {
+                        full_parts.push(format!(
+                            "[Tool: {}]",
+                            tool_name.as_deref().unwrap_or("unknown")
+                        ));
                     }
                 }
                 "reasoning" => {
@@ -335,7 +334,7 @@ impl ConversationAdapter for OpenCodeAdapter {
         }
 
         // 读取 session JSON
-        let content = std::fs::read_to_string(&session_file)?;
+        let content = std::fs::read_to_string(session_file)?;
         let session_data: SessionJson = serde_json::from_str(&content)?;
 
         // 从 session ID 提取 message 目录
