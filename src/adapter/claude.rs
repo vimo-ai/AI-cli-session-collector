@@ -3,6 +3,7 @@
 //! 解析 ~/.claude/projects/{encoded-path}/{session-uuid}.jsonl
 
 use anyhow::{Context, Result};
+use chrono::DateTime;
 use serde::Deserialize;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
@@ -27,6 +28,16 @@ pub static CLAUDE_META: AdapterMeta = AdapterMeta {
     extensions: &["jsonl"],
     recursive: true,
 };
+
+/// 将 ISO 8601 时间戳转换为毫秒时间戳字符串
+///
+/// 输入: "2026-01-21T06:51:29.630Z"
+/// 输出: Some("1769019089630")
+fn format_timestamp(ts: &str) -> Option<String> {
+    DateTime::parse_from_rfc3339(ts)
+        .ok()
+        .map(|dt| dt.timestamp_millis().to_string())
+}
 
 // ============================================================================
 // 适配器实现
@@ -409,7 +420,7 @@ impl ClaudeAdapter {
             session_id: session_id.to_string(),
             message_type: msg_type,
             content: extracted.content,
-            timestamp: entry.timestamp.clone(),
+            timestamp: entry.timestamp.as_deref().and_then(format_timestamp),
             source: Source::Claude,
             channel: Some("code".to_string()),
             model: entry.model.clone(),
