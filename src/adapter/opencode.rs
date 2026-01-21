@@ -383,8 +383,20 @@ impl ConversationAdapter for OpenCodeAdapter {
                         continue;
                     }
 
-                    let part_content = std::fs::read_to_string(&part_file)?;
-                    let part_data: PartJson = serde_json::from_str(&part_content)?;
+                    let part_content = match std::fs::read_to_string(&part_file) {
+                        Ok(content) => content,
+                        Err(e) => {
+                            tracing::warn!("跳过无法读取的 part 文件 {:?}: {}", part_file, e);
+                            continue;
+                        }
+                    };
+                    let part_data: PartJson = match serde_json::from_str(&part_content) {
+                        Ok(data) => data,
+                        Err(e) => {
+                            tracing::warn!("跳过损坏的 part 文件 {:?}: {}", part_file, e);
+                            continue;
+                        }
+                    };
                     parts.push(part_data);
                 }
             }
