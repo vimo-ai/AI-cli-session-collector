@@ -11,9 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::{AdapterMeta, ConversationAdapter};
-use crate::domain::{
-    MessageType, ParseResult, ParsedContent, ParsedMessage, SessionMeta, Source,
-};
+use crate::domain::{MessageType, ParseResult, ParsedContent, ParsedMessage, SessionMeta, Source};
 
 // ============================================================================
 // 适配器元信息（静态配置）
@@ -282,10 +280,7 @@ impl ConversationAdapter for OpenCodeAdapter {
             for session_entry in fs::read_dir(&project_dir)? {
                 let session_entry = session_entry?;
                 let session_file = session_entry.path();
-                let file_name = session_entry
-                    .file_name()
-                    .to_string_lossy()
-                    .to_string();
+                let file_name = session_entry.file_name().to_string_lossy().to_string();
 
                 if !file_name.starts_with("ses_") || !file_name.ends_with(".json") {
                     continue;

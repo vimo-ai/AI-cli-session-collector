@@ -1,7 +1,7 @@
 //! 验证适配器自注册工厂函数
 
 use ai_cli_session_collector::adapter::{
-    all_adapters, all_extensions, all_watch_configs, adapter_for_path, ConversationAdapter,
+    adapter_for_path, all_adapters, all_extensions, all_watch_configs,
 };
 use std::path::Path;
 

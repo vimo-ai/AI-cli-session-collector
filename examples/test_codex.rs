@@ -19,7 +19,10 @@ fn main() {
     for (i, session) in sessions.iter().take(5).enumerate() {
         println!("Session #{}", i + 1);
         println!("  ID: {}", session.id);
-        println!("  项目: {}", session.project_name.as_deref().unwrap_or("unknown"));
+        println!(
+            "  项目: {}",
+            session.project_name.as_deref().unwrap_or("unknown")
+        );
         println!("  路径: {}", session.project_path);
         println!("  cwd: {:?}", session.cwd);
         println!("  session_path: {:?}", session.session_path);
@@ -41,7 +44,8 @@ fn main() {
                 // 显示前 3 条消息
                 println!("\n  前 3 条消息:");
                 for (i, msg) in result.messages.iter().take(3).enumerate() {
-                    println!("    [{}] {} - {}: {}...",
+                    println!(
+                        "    [{}] {} - {}: {}...",
                         i + 1,
                         msg.message_type,
                         msg.uuid,

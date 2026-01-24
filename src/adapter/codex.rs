@@ -27,9 +27,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use super::{AdapterMeta, ConversationAdapter};
-use crate::domain::{
-    MessageType, ParseResult, ParsedContent, ParsedMessage, SessionMeta, Source,
-};
+use crate::domain::{MessageType, ParseResult, ParsedContent, ParsedMessage, SessionMeta, Source};
 
 // ============================================================================
 // 适配器元信息（静态配置）
@@ -210,7 +208,10 @@ impl CodexAdapter {
     /// 从时间戳获取日期目录路径
     fn get_date_dir(&self, ts_ms: i64) -> PathBuf {
         use chrono::{TimeZone, Utc};
-        let dt = Utc.timestamp_millis_opt(ts_ms).single().unwrap_or_else(Utc::now);
+        let dt = Utc
+            .timestamp_millis_opt(ts_ms)
+            .single()
+            .unwrap_or_else(Utc::now);
         let year = dt.format("%Y").to_string();
         let month = dt.format("%m").to_string();
         let day = dt.format("%d").to_string();
@@ -379,10 +380,16 @@ impl CodexAdapter {
                         session_metas.push(payload.clone());
 
                         if cwd.is_none() {
-                            cwd = payload.get("cwd").and_then(|v| v.as_str()).map(String::from);
+                            cwd = payload
+                                .get("cwd")
+                                .and_then(|v| v.as_str())
+                                .map(String::from);
                         }
                         if cli_version.is_none() {
-                            cli_version = payload.get("cli_version").and_then(|v| v.as_str()).map(String::from);
+                            cli_version = payload
+                                .get("cli_version")
+                                .and_then(|v| v.as_str())
+                                .map(String::from);
                         }
                         if git_info.is_none() {
                             git_info = payload.get("git").cloned();
@@ -395,10 +402,16 @@ impl CodexAdapter {
                         turn_contexts.push(payload.clone());
 
                         if cwd.is_none() {
-                            cwd = payload.get("cwd").and_then(|v| v.as_str()).map(String::from);
+                            cwd = payload
+                                .get("cwd")
+                                .and_then(|v| v.as_str())
+                                .map(String::from);
                         }
                         if model.is_none() {
-                            model = payload.get("model").and_then(|v| v.as_str()).map(String::from);
+                            model = payload
+                                .get("model")
+                                .and_then(|v| v.as_str())
+                                .map(String::from);
                         }
                     }
                 }
@@ -421,10 +434,18 @@ impl CodexAdapter {
                                     _ => MessageType::User,
                                 };
 
-                                let msg_id = payload.get("id")
+                                let msg_id = payload
+                                    .get("id")
                                     .and_then(|v| v.as_str())
                                     .map(String::from)
-                                    .unwrap_or_else(|| format!("{}:{}:{}", meta.id, role.unwrap_or("msg"), sequence));
+                                    .unwrap_or_else(|| {
+                                        format!(
+                                            "{}:{}:{}",
+                                            meta.id,
+                                            role.unwrap_or("msg"),
+                                            sequence
+                                        )
+                                    });
 
                                 // 环境上下文消息：text 为空（不向量化），full 保留完整内容
                                 let (text, full) = if is_env_context {
@@ -455,7 +476,8 @@ impl CodexAdapter {
                             }
                             Some("reasoning") => {
                                 // 推理过程 - 提取 summary 文本，encrypted_content 存 meta
-                                let summary_text = payload.get("summary")
+                                let summary_text = payload
+                                    .get("summary")
                                     .and_then(|v| v.as_array())
                                     .map(|arr| {
                                         arr.iter()
@@ -494,7 +516,9 @@ impl CodexAdapter {
                                 let arguments = payload.get("arguments").and_then(|v| v.as_str());
 
                                 messages.push(ParsedMessage {
-                                    uuid: call_id.map(String::from).unwrap_or_else(|| format!("{}:func:{}", meta.id, sequence)),
+                                    uuid: call_id.map(String::from).unwrap_or_else(|| {
+                                        format!("{}:func:{}", meta.id, sequence)
+                                    }),
                                     session_id: meta.id.clone(),
                                     message_type: MessageType::Assistant,
                                     content: ParsedContent {
@@ -516,7 +540,8 @@ impl CodexAdapter {
                             }
                             Some("function_call_output") => {
                                 // 函数输出
-                                let output = payload.get("output").and_then(|v| v.as_str()).unwrap_or("");
+                                let output =
+                                    payload.get("output").and_then(|v| v.as_str()).unwrap_or("");
                                 let call_id = payload.get("call_id").and_then(|v| v.as_str());
 
                                 messages.push(ParsedMessage {
@@ -544,16 +569,20 @@ impl CodexAdapter {
                                 // 自定义工具调用
                                 let name = payload.get("name").and_then(|v| v.as_str());
                                 let call_id = payload.get("id").and_then(|v| v.as_str());
-                                let arguments = payload.get("arguments")
-                                    .map(|v| v.to_string());
+                                let arguments = payload.get("arguments").map(|v| v.to_string());
 
                                 messages.push(ParsedMessage {
-                                    uuid: call_id.map(String::from).unwrap_or_else(|| format!("{}:custom:{}", meta.id, sequence)),
+                                    uuid: call_id.map(String::from).unwrap_or_else(|| {
+                                        format!("{}:custom:{}", meta.id, sequence)
+                                    }),
                                     session_id: meta.id.clone(),
                                     message_type: MessageType::Assistant,
                                     content: ParsedContent {
                                         text: String::new(),
-                                        full: format!("[CustomTool: {}]", name.unwrap_or("unknown")),
+                                        full: format!(
+                                            "[CustomTool: {}]",
+                                            name.unwrap_or("unknown")
+                                        ),
                                     },
                                     timestamp: timestamp.clone(),
                                     source: Source::Codex,
@@ -570,8 +599,15 @@ impl CodexAdapter {
                             }
                             Some("custom_tool_call_output") => {
                                 // 自定义工具输出
-                                let output = payload.get("output")
-                                    .map(|v| if v.is_string() { v.as_str().unwrap_or("").to_string() } else { v.to_string() })
+                                let output = payload
+                                    .get("output")
+                                    .map(|v| {
+                                        if v.is_string() {
+                                            v.as_str().unwrap_or("").to_string()
+                                        } else {
+                                            v.to_string()
+                                        }
+                                    })
                                     .unwrap_or_default();
                                 let call_id = payload.get("id").and_then(|v| v.as_str());
 
@@ -651,7 +687,8 @@ impl CodexAdapter {
                 Some("compacted") => {
                     // 上下文压缩摘要 - 重要信息，作为系统消息保存
                     if let Some(payload) = &event.payload {
-                        let message = payload.get("message")
+                        let message = payload
+                            .get("message")
                             .and_then(|v| v.as_str())
                             .unwrap_or("");
 
@@ -746,18 +783,23 @@ impl ConversationAdapter for CodexAdapter {
             let session_path = self.resolve_session_path(&entry.session_id, ts_ms);
 
             // 从 rollout 文件提取 cwd
-            let cwd = session_path.as_ref()
+            let cwd = session_path
+                .as_ref()
                 .and_then(|p| Self::extract_cwd_from_rollout(p));
 
-            let project_path = cwd.clone()
+            let project_path = cwd
+                .clone()
                 .unwrap_or_else(|| self.sessions_root().to_string_lossy().to_string());
             let project_name = Self::extract_project_name(&project_path);
 
             // 获取文件元数据
-            let (file_mtime, file_size) = session_path.as_ref()
+            let (file_mtime, file_size) = session_path
+                .as_ref()
                 .and_then(|p| fs::metadata(p).ok())
                 .map(|m| {
-                    let mtime = m.modified().ok()
+                    let mtime = m
+                        .modified()
+                        .ok()
                         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                         .map(|d| d.as_millis() as u64);
                     (mtime, Some(m.len()))
@@ -779,10 +821,12 @@ impl ConversationAdapter for CodexAdapter {
                 message_count: None,
                 cwd,
                 model: None,
-                meta: entry.text.map(|t| serde_json::json!({
-                    "historyText": t,
-                    "historyTs": entry.ts
-                })),
+                meta: entry.text.map(|t| {
+                    serde_json::json!({
+                        "historyText": t,
+                        "historyTs": entry.ts
+                    })
+                }),
                 created_at: timestamp.clone(),
                 updated_at: timestamp,
             });

@@ -1,6 +1,6 @@
 //! 测试 OpenCode 适配器
 
-use ai_cli_session_collector::adapter::{OpenCodeAdapter, ConversationAdapter};
+use ai_cli_session_collector::adapter::{ConversationAdapter, OpenCodeAdapter};
 
 fn main() {
     tracing_subscriber::fmt::init();

@@ -1,7 +1,7 @@
 //! Gemini CLI adapter 测试示例
 
-use ai_cli_session_collector::adapter::GeminiAdapter;
 use ai_cli_session_collector::adapter::ConversationAdapter;
+use ai_cli_session_collector::adapter::GeminiAdapter;
 
 fn main() {
     // 初始化日志

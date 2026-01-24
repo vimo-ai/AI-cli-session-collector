@@ -34,7 +34,10 @@ fn main() {
             continue;
         }
         if session.project_path.starts_with("-") && session.project_path.contains("-Users-") {
-            println!("❌ 错误：project_path 仍然是编码形式: {}", session.project_path);
+            println!(
+                "❌ 错误：project_path 仍然是编码形式: {}",
+                session.project_path
+            );
             errors += 1;
         }
     }
@@ -53,7 +56,9 @@ fn main() {
     // 测试路径计算
     println!("\n=== 测试路径计算 ===\n");
     if let Some(session) = sessions.iter().find(|s| !s.project_path.is_empty()) {
-        if let (Some(encoded), Some(session_path)) = (&session.encoded_dir_name, &session.session_path) {
+        if let (Some(encoded), Some(session_path)) =
+            (&session.encoded_dir_name, &session.session_path)
+        {
             let computed = projects_path
                 .join(encoded)
                 .join(format!("{}.jsonl", session.id));

@@ -27,17 +27,17 @@ pub mod domain;
 pub use adapter::{
     // 核心类型
     AdapterMeta,
+    // 具体适配器
+    ClaudeAdapter,
+    CodexAdapter,
     ConversationAdapter,
+    OpenCodeAdapter,
     WatchConfig,
     // 工厂函数
     adapter_for_path,
     all_adapters,
     all_extensions,
     all_watch_configs,
-    // 具体适配器
-    ClaudeAdapter,
-    CodexAdapter,
-    OpenCodeAdapter,
 };
 
 // Re-export 领域类型

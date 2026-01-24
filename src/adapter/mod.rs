@@ -157,11 +157,7 @@ pub fn all_watch_configs() -> Vec<WatchConfig> {
                     name: adapter.meta().name,
                 })
             } else {
-                tracing::debug!(
-                    "跳过不存在的路径: {} ({:?})",
-                    adapter.meta().name,
-                    path
-                );
+                tracing::debug!("跳过不存在的路径: {} ({:?})", adapter.meta().name, path);
                 None
             }
         })

@@ -33,9 +33,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::{AdapterMeta, ConversationAdapter};
-use crate::domain::{
-    MessageType, ParseResult, ParsedContent, ParsedMessage, SessionMeta, Source,
-};
+use crate::domain::{MessageType, ParseResult, ParsedContent, ParsedMessage, SessionMeta, Source};
 
 // ============================================================================
 // 适配器元信息（静态配置）
@@ -158,7 +156,8 @@ impl GeminiAdapter {
         let mut sessions = Vec::new();
         let chats_dir = project_dir.join("chats");
 
-        if chats_dir.exists() && chats_dir.is_dir()
+        if chats_dir.exists()
+            && chats_dir.is_dir()
             && let Ok(entries) = fs::read_dir(&chats_dir)
         {
             for entry in entries.flatten() {
@@ -223,10 +222,7 @@ impl GeminiAdapter {
             file_size,
             message_count: Some(session.messages.len()),
             cwd: None, // Gemini CLI 不存储 cwd
-            model: session
-                .messages
-                .iter()
-                .find_map(|m| m.model.clone()),
+            model: session.messages.iter().find_map(|m| m.model.clone()),
             meta: Some(serde_json::json!({
                 "projectHash": session.project_hash.as_deref().unwrap_or(project_hash)
             })),
@@ -288,7 +284,9 @@ impl GeminiAdapter {
                         tool_args_list.push(serde_json::to_string(args).unwrap_or_default());
                     }
                     // 添加到 full_parts（包含参数摘要）
-                    let args_preview = tc.args.as_ref()
+                    let args_preview = tc
+                        .args
+                        .as_ref()
                         .map(|a| {
                             let s = serde_json::to_string(a).unwrap_or_default();
                             if s.chars().count() > 100 {
@@ -303,16 +301,17 @@ impl GeminiAdapter {
             }
 
             // 生成消息 UUID
-            let uuid = entry.id.clone().unwrap_or_else(|| {
-                format!("{}:{}:{}", session.session_id, msg_type, sequence)
-            });
+            let uuid = entry
+                .id
+                .clone()
+                .unwrap_or_else(|| format!("{}:{}:{}", session.session_id, msg_type, sequence));
 
             messages.push(ParsedMessage {
                 uuid,
                 session_id: session.session_id.clone(),
                 message_type: msg_type,
                 content: ParsedContent {
-                    text: content_text, // 纯文本用于向量化
+                    text: content_text,          // 纯文本用于向量化
                     full: full_parts.join("\n"), // 完整内容用于 FTS
                 },
                 timestamp: entry.timestamp.clone(),
@@ -344,7 +343,9 @@ impl GeminiAdapter {
             updated_at: session.last_updated,
             cwd: None,
             model,
-            meta: session.project_hash.map(|h| serde_json::json!({ "projectHash": h })),
+            meta: session
+                .project_hash
+                .map(|h| serde_json::json!({ "projectHash": h })),
         })
     }
 }
@@ -487,11 +488,12 @@ mod tests {
         assert_eq!(result.messages[0].message_type, MessageType::User);
         assert_eq!(result.messages[0].content.text, "Hello Gemini");
         assert_eq!(result.messages[1].message_type, MessageType::Assistant);
-        assert!(result.messages[1]
-            .content
-            .text
-            .contains("Hello! How can I help you today?"));
+        assert!(
+            result.messages[1]
+                .content
+                .text
+                .contains("Hello! How can I help you today?")
+        );
         assert_eq!(result.model, Some("gemini-2.5-pro".to_string()));
     }
-
 }

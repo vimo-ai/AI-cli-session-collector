@@ -819,7 +819,11 @@ mod tests {
     fn test_read_cwd_from_jsonl_user_without_cwd() {
         // user 消息存在但没有 cwd 字段（理论上不应该发生）
         let mut file = NamedTempFile::new().unwrap();
-        writeln!(file, r#"{{"uuid":"0001","type":"user","message":{{"role":"user","content":"hello"}}}}"#).unwrap();
+        writeln!(
+            file,
+            r#"{{"uuid":"0001","type":"user","message":{{"role":"user","content":"hello"}}}}"#
+        )
+        .unwrap();
         file.flush().unwrap();
 
         let cwd = ClaudeAdapter::read_cwd_from_jsonl(file.path());
@@ -828,8 +832,14 @@ mod tests {
 
     #[test]
     fn test_extract_project_name() {
-        assert_eq!(ClaudeAdapter::extract_project_name("/Users/xxx/project"), "project");
-        assert_eq!(ClaudeAdapter::extract_project_name("/a/b/c/deep/path"), "path");
+        assert_eq!(
+            ClaudeAdapter::extract_project_name("/Users/xxx/project"),
+            "project"
+        );
+        assert_eq!(
+            ClaudeAdapter::extract_project_name("/a/b/c/deep/path"),
+            "path"
+        );
         assert_eq!(ClaudeAdapter::extract_project_name("/single"), "single");
         assert_eq!(ClaudeAdapter::extract_project_name("nopath"), "nopath");
     }
