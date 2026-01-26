@@ -9,11 +9,12 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
-use super::{AdapterMeta, ConversationAdapter};
+use super::{AdapterMeta, ConversationAdapter, IncrementalAdapter, IncrementalParseResult};
 use crate::domain::{
     IndexableMessage, IndexableSession, MessageType, ParseResult, ParsedContent, ParsedMessage,
     SessionMeta, Source,
 };
+use crate::incremental::{JsonlIncrementalReader, ReaderState};
 
 // ============================================================================
 // 适配器元信息（静态配置）
@@ -699,6 +700,92 @@ impl ConversationAdapter for ClaudeAdapter {
 
         let result = self.parse_jsonl_file(path, &meta.id)?;
         Ok(Some(result))
+    }
+}
+
+impl IncrementalAdapter for ClaudeAdapter {
+    fn parse_session_incremental(
+        &self,
+        meta: &SessionMeta,
+        state: Option<ReaderState>,
+    ) -> Result<IncrementalParseResult> {
+        let session_path = match &meta.session_path {
+            Some(p) => p,
+            None => {
+                tracing::warn!("缺少 session_path: {}", meta.id);
+                return Ok(IncrementalParseResult::default());
+            }
+        };
+
+        let path = Path::new(session_path);
+        if !path.exists() {
+            tracing::debug!("会话文件不存在（可能已过期）: {}", session_path);
+            return Ok(IncrementalParseResult::default());
+        }
+
+        // 使用增量读取器读取新增的行
+        let reader = JsonlIncrementalReader::new();
+        let (lines, stats, new_state) = reader.read_incremental(path, state)?;
+
+        if lines.is_empty() {
+            return Ok(IncrementalParseResult {
+                result: None,
+                state: new_state,
+                was_reset: stats.was_reset,
+            });
+        }
+
+        // 解析新增的行
+        let mut messages = Vec::new();
+        let mut cwd = None;
+        let mut model = None;
+        let mut first_timestamp = None;
+        let mut last_timestamp = None;
+
+        for line in &lines {
+            match serde_json::from_str::<JsonlEntry>(line) {
+                Ok(entry) => {
+                    // 提取会话元数据
+                    if cwd.is_none() && entry.cwd.is_some() {
+                        cwd = entry.cwd.clone();
+                    }
+                    if model.is_none() && entry.model.is_some() {
+                        model = entry.model.clone();
+                    }
+
+                    // 转换消息
+                    if let Some(msg) = self.convert_entry(&entry, &meta.id, line) {
+                        if first_timestamp.is_none() {
+                            first_timestamp = msg.timestamp.clone();
+                        }
+                        last_timestamp = msg.timestamp.clone();
+                        messages.push(msg);
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!("解析失败: {}", e);
+                }
+            }
+        }
+
+        let result = if messages.is_empty() {
+            None
+        } else {
+            Some(ParseResult {
+                messages,
+                created_at: first_timestamp,
+                updated_at: last_timestamp,
+                cwd,
+                model,
+                meta: None,
+            })
+        };
+
+        Ok(IncrementalParseResult {
+            result,
+            state: new_state,
+            was_reset: stats.was_reset,
+        })
     }
 }
 

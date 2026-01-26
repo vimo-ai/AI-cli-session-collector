@@ -22,6 +22,7 @@
 
 pub mod adapter;
 pub mod domain;
+pub mod incremental;
 
 // Re-export 适配器相关类型
 pub use adapter::{
@@ -31,6 +32,9 @@ pub use adapter::{
     ClaudeAdapter,
     CodexAdapter,
     ConversationAdapter,
+    // 增量读取
+    IncrementalAdapter,
+    IncrementalParseResult,
     OpenCodeAdapter,
     WatchConfig,
     // 工厂函数
@@ -45,3 +49,6 @@ pub use domain::{
     IndexableMessage, IndexableSession, MessageType, ParseResult, ParsedContent, ParsedMessage,
     SessionMeta, Source,
 };
+
+// Re-export 增量读取类型
+pub use incremental::{FileIdentity, JsonlIncrementalReader, ReadStats, ReaderState};

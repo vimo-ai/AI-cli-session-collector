@@ -33,6 +33,7 @@ pub use gemini::GeminiAdapter;
 pub use opencode::OpenCodeAdapter;
 
 use crate::domain::{ParseResult, SessionMeta, Source};
+use crate::incremental::ReaderState;
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -107,6 +108,41 @@ pub trait ConversationAdapter: Send + Sync {
 
         self.meta().extensions.contains(&ext)
     }
+}
+
+// ============================================================================
+// 增量读取适配器 Trait
+// ============================================================================
+
+/// 增量解析结果
+#[derive(Debug, Clone, Default)]
+pub struct IncrementalParseResult {
+    /// 解析结果（新增的消息）
+    pub result: Option<ParseResult>,
+    /// 更新后的读取状态
+    pub state: ReaderState,
+    /// 是否发生了重置（文件被截断或替换）
+    pub was_reset: bool,
+}
+
+/// 增量读取适配器 trait
+///
+/// 扩展 ConversationAdapter，支持增量读取 JSONL 文件
+pub trait IncrementalAdapter: ConversationAdapter {
+    /// 增量解析会话
+    ///
+    /// # Arguments
+    /// * `meta` - 会话元数据
+    /// * `state` - 上次的读取状态（None 表示从头开始）
+    ///
+    /// # Returns
+    /// * `Ok(IncrementalParseResult)` - 增量解析结果
+    /// * `Err` - 解析失败
+    fn parse_session_incremental(
+        &self,
+        meta: &SessionMeta,
+        state: Option<ReaderState>,
+    ) -> Result<IncrementalParseResult>;
 }
 
 // ============================================================================
