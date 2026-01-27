@@ -74,10 +74,11 @@ impl ClaudeAdapter {
         Self { data_path: path }
     }
 
-    /// 从路径提取项目名
+    /// 从路径提取项目名（跨平台）
     pub fn extract_project_name(path: &str) -> String {
-        path.split('/')
-            .rfind(|s| !s.is_empty())
+        std::path::Path::new(path)
+            .file_name()
+            .and_then(|s| s.to_str())
             .unwrap_or(path)
             .to_string()
     }
