@@ -6,6 +6,7 @@ use super::state::{FileIdentity, ReadStats, ReaderState};
 use anyhow::{Context, Result};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
@@ -46,7 +47,12 @@ impl JsonlIncrementalReader {
         let metadata = std::fs::metadata(path)
             .with_context(|| format!("无法获取文件元数据: {:?}", path))?;
 
+        // Unix: 使用 inode 检测文件替换
+        // Windows: file_index 是 unstable feature，用 0 代替（放弃文件替换检测，但文件截断检测仍有效）
+        #[cfg(unix)]
         let inode = metadata.ino();
+        #[cfg(not(unix))]
+        let inode = 0u64;
         let size = metadata.len();
         let mtime = metadata
             .modified()
