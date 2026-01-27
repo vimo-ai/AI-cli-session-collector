@@ -30,6 +30,7 @@ pub enum MessageType {
     User,
     Assistant,
     Tool,
+    System, // 全量采集：progress/summary/system 等
 }
 
 impl std::fmt::Display for MessageType {
@@ -38,6 +39,7 @@ impl std::fmt::Display for MessageType {
             MessageType::User => write!(f, "user"),
             MessageType::Assistant => write!(f, "assistant"),
             MessageType::Tool => write!(f, "tool"),
+            MessageType::System => write!(f, "system"),
         }
     }
 }
@@ -50,7 +52,8 @@ impl std::str::FromStr for MessageType {
             "human" | "user" => Ok(MessageType::User),
             "assistant" => Ok(MessageType::Assistant),
             "tool" => Ok(MessageType::Tool),
-            _ => Err(format!("Unknown message type: {}", s)),
+            "system" | "progress" | "summary" => Ok(MessageType::System),
+            _ => Ok(MessageType::System), // 全量采集：未知类型也作为 System
         }
     }
 }

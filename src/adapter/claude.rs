@@ -8,6 +8,7 @@ use serde::Deserialize;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
 use super::{AdapterMeta, ConversationAdapter, IncrementalAdapter, IncrementalParseResult};
 use crate::domain::{
@@ -137,41 +138,90 @@ impl ClaudeAdapter {
                 continue;
             };
 
-            // 只处理 message 类型
+            // 全量采集：处理所有类型（跳过无意义的类型）
             let entry_type = entry.entry_type.as_deref();
-            if entry_type != Some("message")
-                && entry_type != Some("user")
-                && entry_type != Some("assistant")
-            {
-                continue;
-            }
-
-            // 提取 UUID
-            let Some(uuid) = entry
-                .uuid
-                .clone()
-                .or_else(|| entry.message.as_ref()?.id.clone())
-            else {
+            let Some(entry_type_str) = entry_type else {
                 continue;
             };
 
-            // 提取角色
-            let role = match entry_type {
-                Some("user") => "user",
-                Some("assistant") => "assistant",
-                Some("message") => entry
+            // 跳过无意义的类型：
+            // - file-history-snapshot: 悬空的备份文件引用
+            // - progress: bash 执行的实时输出快照（每秒一条，最终结果在 tool_result）
+            // - queue-operation: 内部消息队列操作日志
+            if matches!(entry_type_str, "file-history-snapshot" | "progress" | "queue-operation") {
+                continue;
+            }
+
+            // 提取 UUID：有则用，无则生成确定性 UUID
+            let uuid = entry
+                .uuid
+                .clone()
+                .or_else(|| entry.message.as_ref()?.id.clone())
+                .unwrap_or_else(|| {
+                    let name = format!(
+                        "{}:{}:{}:{}",
+                        session_id,
+                        entry.timestamp.as_deref().unwrap_or(""),
+                        entry_type_str,
+                        &line
+                    );
+                    Uuid::new_v5(&Uuid::NAMESPACE_DNS, name.as_bytes()).to_string()
+                });
+
+            // 提取角色（全量采集：其他类型作为 system）
+            let role = match entry_type_str {
+                "user" => "user",
+                "assistant" => "assistant",
+                "message" => entry
                     .message
                     .as_ref()
                     .and_then(|m| m.role.as_deref())
                     .unwrap_or("user"),
-                _ => continue,
+                _ => "system",
             };
 
-            // 提取内容
-            let content = Self::extract_content_static(&entry);
-            if content.full.is_empty() {
-                continue;
-            }
+            // 提取内容（根据类型从不同字段提取）
+            let content = match entry_type_str {
+                "user" | "assistant" | "message" => {
+                    let c = Self::extract_content_static(&entry);
+                    if c.full.is_empty() {
+                        continue;
+                    }
+                    c
+                }
+                "summary" => {
+                    let text = entry.summary.clone().unwrap_or_default();
+                    ParsedContent {
+                        text: text.clone(),
+                        full: format!("[Summary] {}", text),
+                    }
+                }
+                "custom-title" => {
+                    let title = entry.custom_title.clone().unwrap_or_default();
+                    ParsedContent {
+                        text: title.clone(),
+                        full: format!("[custom-title] {}", title),
+                    }
+                }
+                _ => {
+                    // system 等有 data 字段的类型
+                    let data_str = entry
+                        .data
+                        .as_ref()
+                        .map(|v| serde_json::to_string(v).unwrap_or_default())
+                        .unwrap_or_default();
+                    let subtype = entry.subtype.as_deref().unwrap_or("");
+                    let label = if subtype.is_empty() {
+                        entry_type_str.to_string()
+                    } else {
+                        format!("{}:{}", entry_type_str, subtype)
+                    };
+                    ParsedContent {
+                        text: String::new(),
+                        full: format!("[{}] {}", label, data_str),
+                    }
+                }
+            };
 
             // 解析时间戳
             let timestamp = entry
@@ -279,8 +329,8 @@ impl ClaudeAdapter {
                 (None, Some(format!("[Result{}] {}", error_tag, content)))
             }
             Some("thinking") => {
-                // thinking: 不参与任何索引
-                (None, None)
+                // thinking: 全量采集，放入 full
+                (None, block.thinking.clone().map(|t| format!("[Thinking] {}", t)))
             }
             _ => (None, None),
         }
@@ -388,7 +438,7 @@ impl ClaudeAdapter {
         })
     }
 
-    /// 转换单条消息
+    /// 转换单条消息（全量采集：处理所有消息类型）
     fn convert_entry(
         &self,
         entry: &JsonlEntry,
@@ -397,100 +447,144 @@ impl ClaudeAdapter {
     ) -> Option<ParsedMessage> {
         let entry_type = entry.entry_type.as_deref()?;
 
-        // 跳过 summary 类型
-        if entry_type == "summary" {
-            return None;
-        }
-
         // 确定消息类型
         let msg_type = self.get_message_type(entry)?;
 
-        // 提取内容（包括工具信息）
-        let extracted = self.extract_content(entry)?;
-        if extracted.content.full.is_empty() {
-            return None;
-        }
+        // 获取 UUID：有则用，无则基于内容生成确定性 UUID
+        let uuid = entry.uuid.clone().unwrap_or_else(|| {
+            // 用 session_id + timestamp + type + raw_line 生成确定性 uuid
+            let name = format!(
+                "{}:{}:{}:{}",
+                session_id,
+                entry.timestamp.as_deref().unwrap_or(""),
+                entry_type,
+                raw_line
+            );
+            // 使用 DNS namespace 作为基础（也可以自定义）
+            Uuid::new_v5(&Uuid::NAMESPACE_DNS, name.as_bytes()).to_string()
+        });
 
-        // 获取 UUID
-        let uuid = entry
-            .uuid
-            .clone()
-            .or_else(|| entry.message.as_ref()?.id.clone())?;
+        // 提取内容：根据消息类型从不同字段提取
+        let (content, tool_call_id, tool_name, tool_args) = match entry_type {
+            // 有 message 字段的类型
+            "user" | "assistant" | "message" => {
+                if let Some(extracted) = self.extract_content(entry) {
+                    (
+                        extracted.content,
+                        extracted.tool_call_id,
+                        extracted.tool_name,
+                        extracted.tool_args,
+                    )
+                } else {
+                    // message 为空时使用 raw
+                    (
+                        ParsedContent {
+                            text: String::new(),
+                            full: format!("[{}] {}", entry_type, raw_line),
+                        },
+                        None,
+                        None,
+                        None,
+                    )
+                }
+            }
+            // summary 类型
+            "summary" => {
+                let text = entry.summary.clone().unwrap_or_default();
+                (
+                    ParsedContent {
+                        text: text.clone(),
+                        full: format!("[Summary] {}", text),
+                    },
+                    None,
+                    None,
+                    None,
+                )
+            }
+            // custom-title 类型
+            "custom-title" => {
+                let title = entry.custom_title.clone().unwrap_or_default();
+                (
+                    ParsedContent {
+                        text: title.clone(),
+                        full: format!("[custom-title] {}", title),
+                    },
+                    None,
+                    None,
+                    None,
+                )
+            }
+            // system 等有 data 字段的类型
+            _ => {
+                let data_str = entry
+                    .data
+                    .as_ref()
+                    .map(|v| serde_json::to_string(v).unwrap_or_default())
+                    .unwrap_or_default();
+                let subtype = entry.subtype.as_deref().unwrap_or("");
+                let label = if subtype.is_empty() {
+                    entry_type.to_string()
+                } else {
+                    format!("{}:{}", entry_type, subtype)
+                };
+                (
+                    ParsedContent {
+                        text: String::new(),
+                        full: format!("[{}] {}", label, data_str),
+                    },
+                    None,
+                    None,
+                    None,
+                )
+            }
+        };
 
+        // 允许空内容（全量采集）
         Some(ParsedMessage {
             uuid,
             session_id: session_id.to_string(),
             message_type: msg_type,
-            content: extracted.content,
+            content,
             timestamp: entry.timestamp.as_deref().and_then(format_timestamp),
             source: Source::Claude,
             channel: Some("code".to_string()),
             model: entry.model.clone(),
-            tool_call_id: extracted.tool_call_id,
-            tool_name: extracted.tool_name,
-            tool_args: extracted.tool_args,
+            tool_call_id,
+            tool_name,
+            tool_args,
             raw: Some(raw_line.to_string()),
             cwd: entry.cwd.clone(),
             stop_reason: None,
         })
     }
 
-    /// 获取消息类型
+    /// 获取消息类型（全量采集：处理所有类型）
     fn get_message_type(&self, entry: &JsonlEntry) -> Option<MessageType> {
         let entry_type = entry.entry_type.as_deref()?;
 
         match entry_type {
-            "user" => {
-                if !self.should_display_user_message(entry) {
-                    return None;
-                }
-                Some(MessageType::User)
-            }
+            "user" => Some(MessageType::User),
             "assistant" => Some(MessageType::Assistant),
             "message" => {
                 let role = entry.message.as_ref()?.role.as_deref()?;
                 match role {
                     "assistant" => Some(MessageType::Assistant),
-                    "user" => {
-                        if !self.should_display_user_message(entry) {
-                            return None;
-                        }
-                        Some(MessageType::User)
-                    }
-                    _ => None,
+                    "user" => Some(MessageType::User),
+                    _ => Some(MessageType::System), // 其他 role 作为 System
                 }
             }
-            _ => None,
+            // 跳过无意义的类型
+            "file-history-snapshot" | "progress" | "queue-operation" => None,
+            // 有价值的元数据类型作为 System
+            "summary" | "system" => Some(MessageType::System),
+            _ => Some(MessageType::System), // 未知类型也采集
         }
     }
 
-    /// 判断 User 消息是否应该显示
-    fn should_display_user_message(&self, entry: &JsonlEntry) -> bool {
-        // 工具执行结果 - 不显示
-        if entry.tool_use_result.is_some() {
-            return false;
-        }
-
-        // 检查 content 中是否包含 tool_result
-        if self.has_tool_result_in_content(entry) {
-            return false;
-        }
-
-        // 仅 Transcript 可见 - 不显示
-        if entry.is_visible_in_transcript_only == Some(true) {
-            return false;
-        }
-
-        // 压缩摘要 - 不显示
-        if entry.is_compact_summary == Some(true) {
-            return false;
-        }
-
-        // 元数据消息 - 不显示
-        if entry.is_meta == Some(true) {
-            return false;
-        }
-
+    /// 判断 User 消息是否应该显示（全量采集：始终返回 true）
+    #[allow(dead_code)]
+    fn should_display_user_message(&self, _entry: &JsonlEntry) -> bool {
+        // 全量采集：不过滤任何消息
         true
     }
 
@@ -817,6 +911,12 @@ struct JsonlEntry {
     is_compact_summary: Option<bool>,
     #[serde(rename = "isMeta")]
     is_meta: Option<bool>,
+    // 全量采集：支持更多消息类型
+    summary: Option<String>,           // summary 类型的内容
+    data: Option<serde_json::Value>,   // progress/system 等类型的数据
+    subtype: Option<String>,           // system 类型的子类型
+    #[serde(rename = "customTitle")]
+    custom_title: Option<String>,      // custom-title 类型的内容
 }
 
 #[derive(Debug, Deserialize)]
