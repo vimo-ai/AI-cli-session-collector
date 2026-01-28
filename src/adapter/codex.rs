@@ -830,6 +830,9 @@ impl ConversationAdapter for CodexAdapter {
                 }),
                 created_at: timestamp.clone(),
                 updated_at: timestamp,
+                last_message_type: None,
+                last_message_preview: None,
+                last_message_at: None,
             });
         }
 

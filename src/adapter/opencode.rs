@@ -310,6 +310,9 @@ impl ConversationAdapter for OpenCodeAdapter {
                     meta: None,
                     created_at: Some(format_timestamp(session_data.time.created)),
                     updated_at: Some(format_timestamp(session_data.time.updated)),
+                    last_message_type: None,
+                    last_message_preview: None,
+                    last_message_at: None,
                 });
             }
         }

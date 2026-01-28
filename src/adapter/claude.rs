@@ -385,6 +385,142 @@ impl ClaudeAdapter {
         Some(count)
     }
 
+    /// 读取最后一条消息的预览信息
+    ///
+    /// 返回: (message_type, preview_text, timestamp_ms)
+    /// - message_type: "user" 或 "assistant"
+    /// - preview_text: 截取前 100 字符的纯文本预览
+    /// - timestamp_ms: 消息时间戳（毫秒）
+    fn read_last_message_preview(file_path: &Path) -> Option<(String, String, Option<i64>)> {
+        let file = File::open(file_path).ok()?;
+        let reader = BufReader::new(file);
+
+        let mut last_entry: Option<(String, String, Option<i64>)> = None;
+
+        for line in reader.lines() {
+            let line = line.ok()?;
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            let Ok(entry) = serde_json::from_str::<JsonlEntry>(&line) else {
+                continue;
+            };
+
+            // 只处理 user 和 assistant 类型的消息
+            let entry_type = entry.entry_type.as_deref();
+            let msg_type = match entry_type {
+                Some("user") => "user",
+                Some("assistant") => "assistant",
+                Some("message") => {
+                    // message 类型需要检查 role
+                    match entry.message.as_ref().and_then(|m| m.role.as_deref()) {
+                        Some("user") => "user",
+                        Some("assistant") => "assistant",
+                        _ => continue,
+                    }
+                }
+                _ => continue,
+            };
+
+            // 提取预览文本
+            let preview = Self::extract_preview_text(&entry);
+            if preview.is_empty() {
+                continue;
+            }
+
+            // 解析时间戳
+            let timestamp = entry
+                .timestamp
+                .as_ref()
+                .and_then(|s| Self::parse_timestamp(s));
+
+            last_entry = Some((msg_type.to_string(), preview, timestamp));
+        }
+
+        last_entry
+    }
+
+    /// 从消息条目提取预览文本（最多 100 字符）
+    fn extract_preview_text(entry: &JsonlEntry) -> String {
+        let Some(message) = &entry.message else {
+            return String::new();
+        };
+        let Some(content) = &message.content else {
+            return String::new();
+        };
+
+        let text = match content {
+            ContentValue::Text(text) => text.clone(),
+            ContentValue::Blocks(blocks) => {
+                // 优先提取 text block，其次是 tool_use 的名称
+                let mut text_parts = Vec::new();
+                let mut tool_names = Vec::new();
+
+                for block in blocks {
+                    match block.block_type.as_deref() {
+                        Some("text") => {
+                            if let Some(t) = &block.text {
+                                text_parts.push(t.clone());
+                            }
+                        }
+                        Some("tool_use") => {
+                            if let Some(name) = &block.name {
+                                tool_names.push(format!("[Tool: {}]", name));
+                            }
+                        }
+                        Some("tool_result") => {
+                            // tool_result 显示简短的结果摘要
+                            let error_tag = if block.is_error == Some(true) { " Error" } else { "" };
+                            match &block.content {
+                                Some(serde_json::Value::String(s)) => {
+                                    let truncated: String = s.chars().take(50).collect();
+                                    text_parts.push(format!("[Result{}] {}", error_tag, truncated));
+                                }
+                                _ => {
+                                    text_parts.push(format!("[Result{}]", error_tag));
+                                }
+                            }
+                        }
+                        Some("thinking") => {
+                            // thinking block 显示简短摘要
+                            if let Some(t) = &block.thinking {
+                                let truncated: String = t.chars().take(30).collect();
+                                text_parts.push(format!("[Thinking] {}...", truncated));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                // 优先使用 text 内容，没有则使用 tool 信息
+                if !text_parts.is_empty() {
+                    text_parts.join(" ")
+                } else if !tool_names.is_empty() {
+                    tool_names.join(" ")
+                } else {
+                    String::new()
+                }
+            }
+        };
+
+        // 清理并截取前 100 字符
+        let cleaned: String = text
+            .chars()
+            .filter(|c| !c.is_control() || *c == ' ')
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        if cleaned.chars().count() > 100 {
+            let truncated: String = cleaned.chars().take(97).collect();
+            format!("{}...", truncated)
+        } else {
+            cleaned
+        }
+    }
+
     /// 解析单个 JSONL 文件
     fn parse_jsonl_file(&self, file_path: &Path, session_id: &str) -> Result<ParseResult> {
         let file =
@@ -746,6 +882,12 @@ impl ConversationAdapter for ClaudeAdapter {
                 // 快速统计消息数量（JSONL 行数）
                 let message_count = Self::count_jsonl_lines(&file_path);
 
+                // 读取最后一条消息预览
+                let (last_message_type, last_message_preview, last_message_at) =
+                    Self::read_last_message_preview(&file_path)
+                        .map(|(t, p, ts)| (Some(t), Some(p), ts))
+                        .unwrap_or((None, None, None));
+
                 // project_path 使用 cwd，空会话时留空（由调用方处理 fallback）
                 let project_path = cwd.clone().unwrap_or_default();
                 let project_name = if project_path.is_empty() {
@@ -770,6 +912,9 @@ impl ConversationAdapter for ClaudeAdapter {
                     meta: None,
                     created_at: None,
                     updated_at: None,
+                    last_message_type,
+                    last_message_preview,
+                    last_message_at,
                 });
             }
         }

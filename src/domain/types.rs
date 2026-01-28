@@ -92,6 +92,15 @@ pub struct SessionMeta {
     pub created_at: Option<String>,
     /// 更新时间
     pub updated_at: Option<String>,
+    /// 最后一条消息类型 ("user" / "assistant")
+    #[serde(rename = "lastMessageType")]
+    pub last_message_type: Option<String>,
+    /// 最后一条消息预览（纯文本，100 字符）
+    #[serde(rename = "lastMessagePreview")]
+    pub last_message_preview: Option<String>,
+    /// 最后一条消息时间戳（毫秒）
+    #[serde(rename = "lastMessageAt")]
+    pub last_message_at: Option<i64>,
 }
 
 /// 解析后的内容（分离 text 和 full）

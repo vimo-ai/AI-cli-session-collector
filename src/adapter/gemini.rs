@@ -228,6 +228,9 @@ impl GeminiAdapter {
             })),
             created_at: session.start_time.clone(),
             updated_at: session.last_updated.clone(),
+            last_message_type: None,
+            last_message_preview: None,
+            last_message_at: None,
         })
     }
 
