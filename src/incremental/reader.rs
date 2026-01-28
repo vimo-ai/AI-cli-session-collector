@@ -85,19 +85,19 @@ impl JsonlIncrementalReader {
         let current_id = Self::get_file_identity(path)?;
 
         // 检查是否需要重置
-        if let Some(ref old_id) = state.file_id {
-            if old_id.needs_reset(&current_id) {
-                tracing::info!(
-                    "文件变化检测到重置: {:?} (inode: {} -> {}, size: {} -> {})",
-                    path,
-                    old_id.inode,
-                    current_id.inode,
-                    old_id.size,
-                    current_id.size
-                );
-                state.reset();
-                stats.was_reset = true;
-            }
+        if let Some(ref old_id) = state.file_id
+            && old_id.needs_reset(&current_id)
+        {
+            tracing::info!(
+                "文件变化检测到重置: {:?} (inode: {} -> {}, size: {} -> {})",
+                path,
+                old_id.inode,
+                current_id.inode,
+                old_id.size,
+                current_id.size
+            );
+            state.reset();
+            stats.was_reset = true;
         }
 
         // 如果 offset 超过文件大小，也需要重置

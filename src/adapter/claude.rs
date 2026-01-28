@@ -725,6 +725,7 @@ impl ClaudeAdapter {
     }
 
     /// 检查内容中是否包含 tool_result
+    #[allow(dead_code)]
     fn has_tool_result_in_content(&self, entry: &JsonlEntry) -> bool {
         if let Some(message) = &entry.message
             && let Some(ContentValue::Blocks(blocks)) = &message.content
@@ -1049,12 +1050,16 @@ struct JsonlEntry {
     cwd: Option<String>,
     model: Option<String>,
     #[serde(rename = "toolUseResult")]
+    #[allow(dead_code)]
     tool_use_result: Option<serde_json::Value>,
     #[serde(rename = "isVisibleInTranscriptOnly")]
+    #[allow(dead_code)]
     is_visible_in_transcript_only: Option<bool>,
     #[serde(rename = "isCompactSummary")]
+    #[allow(dead_code)]
     is_compact_summary: Option<bool>,
     #[serde(rename = "isMeta")]
+    #[allow(dead_code)]
     is_meta: Option<bool>,
     // 全量采集：支持更多消息类型
     summary: Option<String>,           // summary 类型的内容
