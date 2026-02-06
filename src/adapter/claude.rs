@@ -205,11 +205,21 @@ impl ClaudeAdapter {
                 }
                 _ => {
                     // system 等有 data 字段的类型
-                    let data_str = entry
-                        .data
-                        .as_ref()
-                        .map(|v| serde_json::to_string(v).unwrap_or_default())
-                        .unwrap_or_default();
+                    let data_str = if let Some(data) = entry.data.as_ref() {
+                        // 优先使用 data 字段
+                        serde_json::to_string(data).unwrap_or_default()
+                    } else {
+                        // fallback: 从 extra 中提取特有的业务字段
+                        let useful: serde_json::Map<String, serde_json::Value> = entry.extra.iter()
+                            .filter(|(k, _)| !COMMON_JSONL_KEYS.contains(&k.as_str()))
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect();
+                        if useful.is_empty() {
+                            String::new()
+                        } else {
+                            serde_json::to_string(&useful).unwrap_or_default()
+                        }
+                    };
                     let subtype = entry.subtype.as_deref().unwrap_or("");
                     let label = if subtype.is_empty() {
                         entry_type_str.to_string()
@@ -652,11 +662,21 @@ impl ClaudeAdapter {
             }
             // system 等有 data 字段的类型
             _ => {
-                let data_str = entry
-                    .data
-                    .as_ref()
-                    .map(|v| serde_json::to_string(v).unwrap_or_default())
-                    .unwrap_or_default();
+                let data_str = if let Some(data) = entry.data.as_ref() {
+                    // 优先使用 data 字段
+                    serde_json::to_string(data).unwrap_or_default()
+                } else {
+                    // fallback: 从 extra 中提取特有的业务字段
+                    let useful: serde_json::Map<String, serde_json::Value> = entry.extra.iter()
+                        .filter(|(k, _)| !COMMON_JSONL_KEYS.contains(&k.as_str()))
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect();
+                    if useful.is_empty() {
+                        String::new()
+                    } else {
+                        serde_json::to_string(&useful).unwrap_or_default()
+                    }
+                };
                 let subtype = entry.subtype.as_deref().unwrap_or("");
                 let label = if subtype.is_empty() {
                     entry_type.to_string()
@@ -1032,6 +1052,13 @@ impl IncrementalAdapter for ClaudeAdapter {
 
 // ==================== JSONL 数据结构 ====================
 
+/// JSONL 通用字段（每种消息类型都有），在提取 system 消息元数据时排除这些
+const COMMON_JSONL_KEYS: &[&str] = &[
+    "parentUuid", "isSidechain", "userType", "cwd", "sessionId",
+    "version", "gitBranch", "slug", "timestamp", "uuid", "toolUseID",
+    "type", "subtype", "isMeta",
+];
+
 /// 提取的内容（包括工具信息）
 struct ExtractedContent {
     content: ParsedContent,
@@ -1067,6 +1094,9 @@ struct JsonlEntry {
     subtype: Option<String>,           // system 类型的子类型
     #[serde(rename = "customTitle")]
     custom_title: Option<String>,      // custom-title 类型的内容
+    /// 捕获所有未明确定义的顶层字段（如 durationMs, hookInfos, hookErrors 等）
+    #[serde(flatten)]
+    extra: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1180,5 +1210,36 @@ mod tests {
         );
         assert_eq!(ClaudeAdapter::extract_project_name("/single"), "single");
         assert_eq!(ClaudeAdapter::extract_project_name("nopath"), "nopath");
+    }
+
+    #[test]
+    fn test_system_message_extra_fields() {
+        let jsonl = r#"{"parentUuid":"abc","isSidechain":false,"userType":"external","cwd":"/test","sessionId":"test-session","version":"2.1.31","gitBranch":"main","type":"system","subtype":"turn_duration","durationMs":79808,"timestamp":"2026-02-04T07:50:27.549Z","uuid":"test-uuid-1","isMeta":false}"#;
+
+        let adapter = ClaudeAdapter::new();
+
+        // Parse the entry directly for testing
+        let entry: JsonlEntry = serde_json::from_str(jsonl).unwrap();
+        let msg = adapter.convert_entry(&entry, "test-session", jsonl).unwrap();
+
+        assert_eq!(msg.message_type, MessageType::System);
+        assert!(msg.content.full.contains("turn_duration"), "Should have turn_duration label, got: {}", msg.content.full);
+        assert!(msg.content.full.contains("79808"), "Should contain durationMs value, got: {}", msg.content.full);
+    }
+
+    #[test]
+    fn test_system_message_stop_hook_summary() {
+        let jsonl = r#"{"parentUuid":"abc","isSidechain":false,"userType":"external","cwd":"/test","sessionId":"test-session","version":"2.1.31","gitBranch":"main","type":"system","subtype":"stop_hook_summary","hookCount":2,"hookInfos":[{"command":"test-hook"}],"hookErrors":[],"preventedContinuation":false,"stopReason":"","hasOutput":false,"level":"suggestion","timestamp":"2026-02-04T07:47:31.908Z","uuid":"test-uuid-2","toolUseID":"test-tool-1"}"#;
+
+        let adapter = ClaudeAdapter::new();
+
+        // Parse the entry directly for testing
+        let entry: JsonlEntry = serde_json::from_str(jsonl).unwrap();
+        let msg = adapter.convert_entry(&entry, "test-session", jsonl).unwrap();
+
+        assert_eq!(msg.message_type, MessageType::System);
+        assert!(msg.content.full.contains("stop_hook_summary"), "Should have stop_hook_summary label, got: {}", msg.content.full);
+        assert!(msg.content.full.contains("hookCount"), "Should contain hookCount, got: {}", msg.content.full);
+        assert!(msg.content.full.contains("hookInfos"), "Should contain hookInfos, got: {}", msg.content.full);
     }
 }
