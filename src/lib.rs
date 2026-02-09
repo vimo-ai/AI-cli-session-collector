@@ -23,6 +23,7 @@
 pub mod adapter;
 pub mod domain;
 pub mod incremental;
+pub mod validate;
 
 // Re-export 适配器相关类型
 pub use adapter::{
