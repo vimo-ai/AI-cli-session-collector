@@ -313,6 +313,8 @@ impl ConversationAdapter for OpenCodeAdapter {
                     last_message_type: None,
                     last_message_preview: None,
                     last_message_at: None,
+                    parent_session_id: None,
+                    session_type: None,
                 });
             }
         }

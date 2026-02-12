@@ -936,7 +936,76 @@ impl ConversationAdapter for ClaudeAdapter {
                     last_message_type,
                     last_message_preview,
                     last_message_at,
+                    parent_session_id: None,
+                    session_type: Some("main".to_string()),
                 });
+
+                // 扫描 subagents 目录: {project_dir}/{session_uuid}/subagents/*.jsonl
+                let subagents_dir = project_dir.join(session_id).join("subagents");
+                if subagents_dir.is_dir() {
+                    if let Ok(sub_entries) = fs::read_dir(&subagents_dir) {
+                        for sub_entry in sub_entries.flatten() {
+                            let sub_path = sub_entry.path();
+                            if !sub_path.is_file() {
+                                continue;
+                            }
+                            let sub_name = sub_path
+                                .file_name()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or_default();
+                            if !sub_name.ends_with(".jsonl") {
+                                continue;
+                            }
+                            let sub_session_id = sub_name.trim_end_matches(".jsonl");
+                            if sub_session_id.is_empty() {
+                                continue;
+                            }
+
+                            let (sub_mtime, sub_size) = match fs::metadata(&sub_path) {
+                                Ok(m) => {
+                                    let mtime = m
+                                        .modified()
+                                        .ok()
+                                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                        .map(|d| d.as_millis() as u64);
+                                    (mtime, Some(m.len()))
+                                }
+                                Err(_) => (None, None),
+                            };
+
+                            let sub_cwd = Self::read_cwd_from_jsonl(&sub_path);
+                            let sub_project_path = sub_cwd.clone().unwrap_or_default();
+                            let sub_project_name = if sub_project_path.is_empty() {
+                                None
+                            } else {
+                                Some(Self::extract_project_name(&sub_project_path))
+                            };
+
+                            results.push(SessionMeta {
+                                id: sub_session_id.to_string(),
+                                source: Source::Claude,
+                                channel: Some("code".to_string()),
+                                project_path: sub_project_path,
+                                project_name: sub_project_name,
+                                encoded_dir_name: Some(encoded_name.to_string()),
+                                session_path: Some(sub_path.to_string_lossy().to_string()),
+                                file_mtime: sub_mtime,
+                                file_size: sub_size,
+                                message_count: None, // subagent 不需要预统计行数
+                                cwd: sub_cwd,
+                                model: None,
+                                meta: None,
+                                created_at: None,
+                                updated_at: None,
+                                last_message_type: None,
+                                last_message_preview: None,
+                                last_message_at: None,
+                                parent_session_id: Some(session_id.to_string()),
+                                session_type: Some("subagent".to_string()),
+                            });
+                        }
+                    }
+                }
             }
         }
 

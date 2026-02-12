@@ -101,6 +101,12 @@ pub struct SessionMeta {
     /// 最后一条消息时间戳（毫秒）
     #[serde(rename = "lastMessageAt")]
     pub last_message_at: Option<i64>,
+    /// 父会话 ID（subagent 的父 session UUID）
+    #[serde(rename = "parentSessionId")]
+    pub parent_session_id: Option<String>,
+    /// 会话类型（main / subagent）
+    #[serde(rename = "sessionType")]
+    pub session_type: Option<String>,
 }
 
 /// 解析后的内容（分离 text 和 full）
