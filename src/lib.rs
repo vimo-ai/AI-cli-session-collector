@@ -22,6 +22,7 @@
 
 pub mod adapter;
 pub mod domain;
+pub mod image_compress;
 pub mod incremental;
 pub mod validate;
 

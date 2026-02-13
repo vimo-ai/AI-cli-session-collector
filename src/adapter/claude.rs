@@ -251,7 +251,7 @@ impl ClaudeAdapter {
                 content,
                 timestamp,
                 sequence,
-                raw: Some(line.clone()),
+                raw: Some(crate::image_compress::compress_images_in_line(&line)),
             });
             sequence += 1;
         }
@@ -708,7 +708,7 @@ impl ClaudeAdapter {
             tool_call_id,
             tool_name,
             tool_args,
-            raw: Some(raw_line.to_string()),
+            raw: Some(crate::image_compress::compress_images_in_line(raw_line)),
             cwd: entry.cwd.clone(),
             stop_reason: None,
         })
