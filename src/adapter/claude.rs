@@ -382,6 +382,56 @@ impl ClaudeAdapter {
         None
     }
 
+    /// 从 JSONL 文件的第一条 user 消息中提取 continuation marker
+    ///
+    /// 检测 `[continuation_from: {uuid}]` 格式的标记，返回 parent session_id
+    pub fn read_continuation_from_jsonl(file_path: &Path) -> Option<String> {
+        const MARKER_PREFIX: &str = "[continuation_from: ";
+        const MARKER_SUFFIX: char = ']';
+
+        let file = File::open(file_path).ok()?;
+        let reader = BufReader::new(file);
+
+        for line in reader.lines() {
+            let line = line.ok()?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Ok(entry) = serde_json::from_str::<JsonlEntry>(&line) {
+                if entry.entry_type.as_deref() != Some("user") {
+                    continue;
+                }
+                // 从 message.content 提取文本
+                let text = match entry.message.as_ref()?.content.as_ref()? {
+                    ContentValue::Text(s) => s.clone(),
+                    ContentValue::Blocks(blocks) => {
+                        // 取最后一个 text block
+                        blocks
+                            .iter()
+                            .rev()
+                            .find(|b| b.block_type.as_deref() == Some("text"))
+                            .and_then(|b| b.text.clone())?
+                    }
+                };
+                // 查找 marker: [continuation_from: {uuid}]
+                if let Some(start) = text.rfind(MARKER_PREFIX) {
+                    let after_prefix = start + MARKER_PREFIX.len();
+                    if let Some(end) = text[after_prefix..].find(MARKER_SUFFIX) {
+                        let session_id = text[after_prefix..after_prefix + end].trim();
+                        // UUID 格式验证: 36 字符, 含 4 个 '-'
+                        if session_id.len() == 36
+                            && session_id.chars().filter(|c| *c == '-').count() == 4
+                        {
+                            return Some(session_id.to_string());
+                        }
+                    }
+                }
+                return None; // 只检查第一条 user 消息
+            }
+        }
+        None
+    }
+
     /// 快速统计 JSONL 文件的行数（消息数量）
     /// 只统计非空行，不解析 JSON 内容以提高性能
     fn count_jsonl_lines(file_path: &Path) -> Option<usize> {
@@ -909,6 +959,9 @@ impl ConversationAdapter for ClaudeAdapter {
                         .map(|(t, p, ts)| (Some(t), Some(p), ts))
                         .unwrap_or((None, None, None));
 
+                // 检测 continuation marker
+                let continuation_from = Self::read_continuation_from_jsonl(&file_path);
+
                 // project_path 使用 cwd，空会话时留空（由调用方处理 fallback）
                 let project_path = cwd.clone().unwrap_or_default();
                 let project_name = if project_path.is_empty() {
@@ -938,6 +991,7 @@ impl ConversationAdapter for ClaudeAdapter {
                     last_message_at,
                     parent_session_id: None,
                     session_type: Some("main".to_string()),
+                    continuation_from,
                 });
 
                 // 扫描 subagents 目录: {project_dir}/{session_uuid}/subagents/*.jsonl
@@ -1002,6 +1056,7 @@ impl ConversationAdapter for ClaudeAdapter {
                                 last_message_at: None,
                                 parent_session_id: Some(session_id.to_string()),
                                 session_type: Some("subagent".to_string()),
+                                continuation_from: None,
                             });
                         }
                     }

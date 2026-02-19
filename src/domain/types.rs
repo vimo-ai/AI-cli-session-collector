@@ -107,6 +107,9 @@ pub struct SessionMeta {
     /// 会话类型（main / subagent）
     #[serde(rename = "sessionType")]
     pub session_type: Option<String>,
+    /// Continuation 链前驱 session ID（从 [continuation_from: uuid] marker 解析）
+    #[serde(rename = "continuationFrom")]
+    pub continuation_from: Option<String>,
 }
 
 /// 解析后的内容（分离 text 和 full）
