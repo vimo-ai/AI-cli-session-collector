@@ -50,6 +50,23 @@ pub static GEMINI_META: AdapterMeta = AdapterMeta {
 };
 
 // ============================================================================
+// 工具函数
+// ============================================================================
+
+/// 解析 ISO 8601 时间戳为毫秒
+fn parse_iso_timestamp(s: &str) -> Option<i64> {
+    // 尝试解析 ISO 8601 格式
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Some(dt.timestamp_millis());
+    }
+    // 尝试解析纯数字（已经是毫秒）
+    if let Ok(ms) = s.parse::<i64>() {
+        return Some(ms);
+    }
+    None
+}
+
+// ============================================================================
 // JSON 数据结构
 // ============================================================================
 
@@ -320,7 +337,7 @@ impl GeminiAdapter {
                     text: content_text,          // 纯文本用于向量化
                     full: full_parts.join("\n"), // 完整内容用于 FTS
                 },
-                timestamp: entry.timestamp.clone(),
+                timestamp: entry.timestamp.as_deref().and_then(parse_iso_timestamp).map(|ms| ms.to_string()),
                 source: Source::Gemini,
                 channel: Some("cli".to_string()),
                 model: entry.model.clone(),

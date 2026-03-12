@@ -205,6 +205,19 @@ impl CodexAdapter {
         Self::parse_timestamp(ts).map(|ms| ms.to_string())
     }
 
+    /// 解析 ISO 8601 时间戳字符串为毫秒
+    fn parse_iso_timestamp(s: &str) -> Option<i64> {
+        // 尝试解析 ISO 8601 格式
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+            return Some(dt.timestamp_millis());
+        }
+        // 尝试解析纯数字（已经是毫秒）
+        if let Ok(ms) = s.parse::<i64>() {
+            return Some(ms);
+        }
+        None
+    }
+
     /// 从时间戳获取日期目录路径
     fn get_date_dir(&self, ts_ms: i64) -> PathBuf {
         use chrono::{TimeZone, Utc};
@@ -366,7 +379,10 @@ impl CodexAdapter {
             };
 
             let event_type = event.event_type.as_deref();
-            let timestamp = event.timestamp.clone();
+            // 将 ISO 8601 时间戳转换为毫秒字符串
+            let timestamp = event.timestamp.as_deref().and_then(|s| {
+                Self::parse_iso_timestamp(s).map(|ms| ms.to_string())
+            });
 
             // 更新时间戳
             if first_timestamp.is_none() {
