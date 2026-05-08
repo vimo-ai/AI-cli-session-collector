@@ -382,16 +382,18 @@ impl ClaudeAdapter {
         None
     }
 
-    /// 从 JSONL 文件的第一条 user 消息中提取 continuation marker
+    /// 从 JSONL 文件的前几条 user 消息中提取 continuation marker
     ///
     /// 检测 `[continuation_from: {uuid}]` 格式的标记，返回 parent session_id
     pub fn read_continuation_from_jsonl(file_path: &Path) -> Option<String> {
         const MARKER_PREFIX: &str = "[continuation_from: ";
         const MARKER_SUFFIX: char = ']';
+        const MAX_USER_MESSAGES: usize = 5;
 
         let file = File::open(file_path).ok()?;
         let reader = BufReader::new(file);
 
+        let mut user_count = 0;
         for line in reader.lines() {
             let line = line.ok()?;
             if line.trim().is_empty() {
@@ -401,17 +403,25 @@ impl ClaudeAdapter {
                 if entry.entry_type.as_deref() != Some("user") {
                     continue;
                 }
+                user_count += 1;
+                if user_count > MAX_USER_MESSAGES {
+                    return None;
+                }
                 // 从 message.content 提取文本
-                let text = match entry.message.as_ref()?.content.as_ref()? {
-                    ContentValue::Text(s) => s.clone(),
-                    ContentValue::Blocks(blocks) => {
-                        // 取最后一个 text block
-                        blocks
+                let text = match entry.message.as_ref().and_then(|m| m.content.as_ref()) {
+                    Some(ContentValue::Text(s)) => s.clone(),
+                    Some(ContentValue::Blocks(blocks)) => {
+                        match blocks
                             .iter()
                             .rev()
                             .find(|b| b.block_type.as_deref() == Some("text"))
-                            .and_then(|b| b.text.clone())?
+                            .and_then(|b| b.text.clone())
+                        {
+                            Some(t) => t,
+                            None => continue,
+                        }
                     }
+                    None => continue,
                 };
                 // 查找 marker: [continuation_from: {uuid}]
                 if let Some(start) = text.rfind(MARKER_PREFIX) {
@@ -426,7 +436,6 @@ impl ClaudeAdapter {
                         }
                     }
                 }
-                return None; // 只检查第一条 user 消息
             }
         }
         None
