@@ -142,8 +142,8 @@ impl ClaudeValidator {
             // 统计 subagent 数量
             if let Some(dir) = session_dir_opt {
                 let subagent_dir = dir.join("subagents");
-                if subagent_dir.is_dir() {
-                    if let Ok(sub_entries) = std::fs::read_dir(&subagent_dir) {
+                if subagent_dir.is_dir()
+                    && let Ok(sub_entries) = std::fs::read_dir(&subagent_dir) {
                         result.stats.subagent_count += sub_entries
                             .flatten()
                             .filter(|e| {
@@ -155,7 +155,6 @@ impl ClaudeValidator {
                             })
                             .count();
                     }
-                }
             }
         }
 
@@ -416,13 +415,12 @@ impl ClaudeValidator {
             result.findings.extend(l4_findings);
 
             // L5: tool-results 交叉引用
-            if self.max_level >= 5 {
-                if let Some(dir) = session_dir {
+            if self.max_level >= 5
+                && let Some(dir) = session_dir {
                     let tr_findings =
                         project::validate_tool_results(dir, &validated_lines, session_id);
                     result.findings.extend(tr_findings);
                 }
-            }
         }
     }
 }

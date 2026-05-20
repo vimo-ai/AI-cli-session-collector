@@ -640,11 +640,10 @@ pub fn check_value_domains(
 fn check_domain(value: &serde_json::Value, domain: &ValueDomain) -> Option<String> {
     match domain {
         ValueDomain::Enum(allowed) => {
-            if let Some(s) = value.as_str() {
-                if !allowed.contains(&s) {
+            if let Some(s) = value.as_str()
+                && !allowed.contains(&s) {
                     return Some(format!("值 \"{}\" 不在枚举列表中", s));
                 }
-            }
             None
         }
         ValueDomain::UuidFormat => {
@@ -660,19 +659,17 @@ fn check_domain(value: &serde_json::Value, domain: &ValueDomain) -> Option<Strin
             None
         }
         ValueDomain::Iso8601 => {
-            if let Some(s) = value.as_str() {
-                if chrono::DateTime::parse_from_rfc3339(s).is_err() && s.parse::<i64>().is_err() {
+            if let Some(s) = value.as_str()
+                && chrono::DateTime::parse_from_rfc3339(s).is_err() && s.parse::<i64>().is_err() {
                     return Some(format!("无法解析时间戳: \"{}\"", truncate(s, 30)));
                 }
-            }
             None
         }
         ValueDomain::NonNegative => {
-            if let Some(n) = value.as_f64() {
-                if n < 0.0 {
+            if let Some(n) = value.as_f64()
+                && n < 0.0 {
                     return Some(format!("负数: {}", n));
                 }
-            }
             None
         }
     }

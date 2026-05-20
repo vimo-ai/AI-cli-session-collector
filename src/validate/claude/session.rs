@@ -178,8 +178,8 @@ pub fn validate_subagent_dirs(session_dir: &Path, session_id: &str) -> Vec<Findi
         if let Ok(file) = std::fs::File::open(&path) {
             use std::io::{BufRead, BufReader};
             let reader = BufReader::new(file);
-            if let Some(Ok(first_line)) = reader.lines().next() {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&first_line) {
+            if let Some(Ok(first_line)) = reader.lines().next()
+                && let Ok(val) = serde_json::from_str::<serde_json::Value>(&first_line) {
                     let is_sidechain = val
                         .get("isSidechain")
                         .and_then(|v| v.as_bool())
@@ -197,8 +197,8 @@ pub fn validate_subagent_dirs(session_dir: &Path, session_id: &str) -> Vec<Findi
                     }
 
                     // sessionId 应匹配父 session
-                    if let Some(sid) = val.get("sessionId").and_then(|v| v.as_str()) {
-                        if sid != session_id {
+                    if let Some(sid) = val.get("sessionId").and_then(|v| v.as_str())
+                        && sid != session_id {
                             findings.push(Finding {
                                 level: Level::L4Session,
                                 severity: Severity::Warning,
@@ -214,9 +214,7 @@ pub fn validate_subagent_dirs(session_dir: &Path, session_id: &str) -> Vec<Findi
                                 context: None,
                             });
                         }
-                    }
                 }
-            }
         }
     }
 

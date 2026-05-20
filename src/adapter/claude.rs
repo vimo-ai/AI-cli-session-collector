@@ -1031,8 +1031,8 @@ impl ConversationAdapter for ClaudeAdapter {
 
                 // 扫描 subagents 目录: {project_dir}/{session_uuid}/subagents/*.jsonl
                 let subagents_dir = project_dir.join(session_id).join("subagents");
-                if subagents_dir.is_dir() {
-                    if let Ok(sub_entries) = fs::read_dir(&subagents_dir) {
+                if subagents_dir.is_dir()
+                    && let Ok(sub_entries) = fs::read_dir(&subagents_dir) {
                         for sub_entry in sub_entries.flatten() {
                             let sub_path = sub_entry.path();
                             if !sub_path.is_file() {
@@ -1095,7 +1095,6 @@ impl ConversationAdapter for ClaudeAdapter {
                             });
                         }
                     }
-                }
             }
         }
 

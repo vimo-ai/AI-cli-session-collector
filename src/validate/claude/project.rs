@@ -295,7 +295,7 @@ pub fn validate_tool_results(
         if json_str.contains("tool-results/") {
             // 简单提取：找 tool-results/后面的文件名
             for part in json_str.split("tool-results/") {
-                if let Some(end) = part.find(|c: char| c == '"' || c == '\'' || c == '\\') {
+                if let Some(end) = part.find(['"', '\'', '\\']) {
                     let filename = &part[..end];
                     if !filename.is_empty() {
                         referenced_files.insert(filename.to_string());

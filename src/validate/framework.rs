@@ -103,6 +103,12 @@ pub struct ValidationResult {
     pub stats: ProjectStats,
 }
 
+impl Default for ValidationResult {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ValidationResult {
     pub fn new() -> Self {
         Self {

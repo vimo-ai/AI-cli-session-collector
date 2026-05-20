@@ -59,8 +59,8 @@ pub fn validate_request_groups(groups: &[RequestGroup], session_id: &str) -> Vec
             for i in 1..group.lines.len() {
                 let prev_uuid = &group.lines[i - 1].uuid;
                 let curr_parent = &group.lines[i].parent_uuid;
-                if let (Some(prev), Some(parent)) = (prev_uuid, curr_parent) {
-                    if prev != parent {
+                if let (Some(prev), Some(parent)) = (prev_uuid, curr_parent)
+                    && prev != parent {
                         // 允许并行 tool_use 分叉：多个行共享同一个 parentUuid
                         // 这不是错误，只是 info 级别记录
                         findings.push(Finding {
@@ -80,7 +80,6 @@ pub fn validate_request_groups(groups: &[RequestGroup], session_id: &str) -> Vec
                             )),
                         });
                     }
-                }
             }
         }
 

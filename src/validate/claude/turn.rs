@@ -136,8 +136,8 @@ pub fn validate_turns(turns: &[Turn], session_id: &str) -> Vec<Finding> {
 
         // Turn 结束判定：最后一个 assistant 行的 content 不含 tool_use block 即为正常结束
         // JSONL 无有效 stop_reason，从 content block type 推断
-        if let Some(last_group) = turn.request_groups.last() {
-            if let Some(last_line) = last_group.lines.last() {
+        if let Some(last_group) = turn.request_groups.last()
+            && let Some(last_line) = last_group.lines.last() {
                 let has_tool_use = last_line
                     .value
                     .get("message")
@@ -165,7 +165,6 @@ pub fn validate_turns(turns: &[Turn], session_id: &str) -> Vec<Finding> {
                     });
                 }
             }
-        }
 
         // system 行检查：turn_duration 通常在 Turn 末尾
         let has_turn_duration = turn

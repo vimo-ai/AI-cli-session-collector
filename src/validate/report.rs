@@ -200,7 +200,7 @@ pub fn format_human_report(result: &ValidationResult, verbose: bool) -> String {
             let session = info
                 .first_session
                 .as_deref()
-                .map(|s| truncate_id(s))
+                .map(truncate_id)
                 .unwrap_or_default();
             let line_suffix = info
                 .first_line
