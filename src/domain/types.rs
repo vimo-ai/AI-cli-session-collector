@@ -154,6 +154,12 @@ pub struct ParsedMessage {
 
     /// 停止原因
     pub stop_reason: Option<String>,
+
+    /// Token usage (from message.usage)
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub cache_read_input_tokens: Option<i64>,
+    pub cache_creation_input_tokens: Option<i64>,
 }
 
 /// 适配器解析结果
@@ -196,4 +202,9 @@ pub struct IndexableMessage {
     pub sequence: i64,
     /// 原始 JSONL 行
     pub raw: Option<String>,
+    /// Token usage
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub cache_read_input_tokens: Option<i64>,
+    pub cache_creation_input_tokens: Option<i64>,
 }

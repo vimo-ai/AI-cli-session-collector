@@ -356,6 +356,10 @@ impl GeminiAdapter {
                 raw: Some(serde_json::to_string(&entry).unwrap_or_default()),
                 cwd: None,
                 stop_reason: None,
+                input_tokens: entry.tokens.as_ref().and_then(|t| t.input),
+                output_tokens: entry.tokens.as_ref().and_then(|t| t.output),
+                cache_read_input_tokens: entry.tokens.as_ref().and_then(|t| t.cached),
+                cache_creation_input_tokens: None,
             });
             sequence += 1;
         }

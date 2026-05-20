@@ -487,6 +487,10 @@ impl CodexAdapter {
                                         raw: Some(line.clone()),
                                         cwd: cwd.clone(),
                                         stop_reason: None,
+                                        input_tokens: None,
+                                        output_tokens: None,
+                                        cache_read_input_tokens: None,
+                                        cache_creation_input_tokens: None,
                                     });
                                     sequence += 1;
                                 }
@@ -523,6 +527,10 @@ impl CodexAdapter {
                                     raw: Some(line.clone()),
                                     cwd: cwd.clone(),
                                     stop_reason: None,
+                                    input_tokens: None,
+                                    output_tokens: None,
+                                    cache_read_input_tokens: None,
+                                    cache_creation_input_tokens: None,
                                 });
                                 sequence += 1;
                             }
@@ -552,6 +560,10 @@ impl CodexAdapter {
                                     raw: Some(line.clone()),
                                     cwd: cwd.clone(),
                                     stop_reason: None,
+                                    input_tokens: None,
+                                    output_tokens: None,
+                                    cache_read_input_tokens: None,
+                                    cache_creation_input_tokens: None,
                                 });
                                 sequence += 1;
                             }
@@ -579,6 +591,10 @@ impl CodexAdapter {
                                     raw: Some(line.clone()),
                                     cwd: cwd.clone(),
                                     stop_reason: None,
+                                    input_tokens: None,
+                                    output_tokens: None,
+                                    cache_read_input_tokens: None,
+                                    cache_creation_input_tokens: None,
                                 });
                                 sequence += 1;
                             }
@@ -611,6 +627,10 @@ impl CodexAdapter {
                                     raw: Some(line.clone()),
                                     cwd: cwd.clone(),
                                     stop_reason: None,
+                                    input_tokens: None,
+                                    output_tokens: None,
+                                    cache_read_input_tokens: None,
+                                    cache_creation_input_tokens: None,
                                 });
                                 sequence += 1;
                             }
@@ -646,6 +666,10 @@ impl CodexAdapter {
                                     raw: Some(line.clone()),
                                     cwd: cwd.clone(),
                                     stop_reason: None,
+                                    input_tokens: None,
+                                    output_tokens: None,
+                                    cache_read_input_tokens: None,
+                                    cache_creation_input_tokens: None,
                                 });
                                 sequence += 1;
                             }
@@ -669,6 +693,10 @@ impl CodexAdapter {
                                     raw: Some(line.clone()),
                                     cwd: cwd.clone(),
                                     stop_reason: None,
+                                    input_tokens: None,
+                                    output_tokens: None,
+                                    cache_read_input_tokens: None,
+                                    cache_creation_input_tokens: None,
                                 });
                                 sequence += 1;
                             }
@@ -694,6 +722,10 @@ impl CodexAdapter {
                                         raw: Some(line.clone()),
                                         cwd: cwd.clone(),
                                         stop_reason: None,
+                                        input_tokens: None,
+                                        output_tokens: None,
+                                        cache_read_input_tokens: None,
+                                        cache_creation_input_tokens: None,
                                     });
                                     sequence += 1;
                                 }
@@ -728,6 +760,10 @@ impl CodexAdapter {
                                 raw: Some(line.clone()),
                                 cwd: cwd.clone(),
                                 stop_reason: None,
+                                input_tokens: None,
+                                output_tokens: None,
+                                cache_read_input_tokens: None,
+                                cache_creation_input_tokens: None,
                             });
                             sequence += 1;
                         }

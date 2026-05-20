@@ -245,6 +245,7 @@ impl ClaudeAdapter {
                         .unwrap_or(0)
                 });
 
+            let usage = entry.message.as_ref().and_then(|m| m.usage.as_ref());
             messages.push(IndexableMessage {
                 uuid,
                 role: role.to_string(),
@@ -252,6 +253,10 @@ impl ClaudeAdapter {
                 timestamp,
                 sequence,
                 raw: Some(crate::image_compress::compress_images_in_line(&line)),
+                input_tokens: usage.and_then(|u| u.input_tokens),
+                output_tokens: usage.and_then(|u| u.output_tokens),
+                cache_read_input_tokens: usage.and_then(|u| u.cache_read_input_tokens),
+                cache_creation_input_tokens: usage.and_then(|u| u.cache_creation_input_tokens),
             });
             sequence += 1;
         }
@@ -754,6 +759,9 @@ impl ClaudeAdapter {
             }
         };
 
+        // Extract token usage from message.usage
+        let usage = entry.message.as_ref().and_then(|m| m.usage.as_ref());
+
         // 允许空内容（全量采集）
         Some(ParsedMessage {
             uuid,
@@ -770,6 +778,10 @@ impl ClaudeAdapter {
             raw: Some(crate::image_compress::compress_images_in_line(raw_line)),
             cwd: entry.cwd.clone(),
             stop_reason: None,
+            input_tokens: usage.and_then(|u| u.input_tokens),
+            output_tokens: usage.and_then(|u| u.output_tokens),
+            cache_read_input_tokens: usage.and_then(|u| u.cache_read_input_tokens),
+            cache_creation_input_tokens: usage.and_then(|u| u.cache_creation_input_tokens),
         })
     }
 
@@ -1237,6 +1249,15 @@ struct MessageContent {
     id: Option<String>,
     role: Option<String>,
     content: Option<ContentValue>,
+    usage: Option<UsageInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UsageInfo {
+    input_tokens: Option<i64>,
+    output_tokens: Option<i64>,
+    cache_read_input_tokens: Option<i64>,
+    cache_creation_input_tokens: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]

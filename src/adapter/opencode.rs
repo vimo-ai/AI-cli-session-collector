@@ -423,6 +423,10 @@ impl ConversationAdapter for OpenCodeAdapter {
                 raw: None,
                 cwd: msg_data.path.as_ref().and_then(|p| p.cwd.clone()),
                 stop_reason: msg_data.finish.clone(),
+                input_tokens: msg_data.tokens.as_ref().map(|t| t.input as i64),
+                output_tokens: msg_data.tokens.as_ref().map(|t| t.output as i64),
+                cache_read_input_tokens: msg_data.tokens.as_ref().and_then(|t| t.cache_info.as_ref().map(|c| c.read as i64)),
+                cache_creation_input_tokens: msg_data.tokens.as_ref().and_then(|t| t.cache_info.as_ref().map(|c| c.write as i64)),
             };
 
             messages.push(parsed_msg);
