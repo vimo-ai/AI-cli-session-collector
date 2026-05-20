@@ -148,7 +148,10 @@ impl ClaudeAdapter {
             // - file-history-snapshot: 悬空的备份文件引用
             // - progress: bash 执行的实时输出快照（每秒一条，最终结果在 tool_result）
             // - queue-operation: 内部消息队列操作日志
-            if matches!(entry_type_str, "file-history-snapshot" | "progress" | "queue-operation") {
+            if matches!(
+                entry_type_str,
+                "file-history-snapshot" | "progress" | "queue-operation"
+            ) {
                 continue;
             }
 
@@ -210,7 +213,9 @@ impl ClaudeAdapter {
                         serde_json::to_string(data).unwrap_or_default()
                     } else {
                         // fallback: 从 extra 中提取特有的业务字段
-                        let useful: serde_json::Map<String, serde_json::Value> = entry.extra.iter()
+                        let useful: serde_json::Map<String, serde_json::Value> = entry
+                            .extra
+                            .iter()
                             .filter(|(k, _)| !COMMON_JSONL_KEYS.contains(&k.as_str()))
                             .map(|(k, v)| (k.clone(), v.clone()))
                             .collect();
@@ -345,7 +350,10 @@ impl ClaudeAdapter {
             }
             Some("thinking") => {
                 // thinking: 全量采集，放入 full
-                (None, block.thinking.clone().map(|t| format!("[Thinking] {}", t)))
+                (
+                    None,
+                    block.thinking.clone().map(|t| format!("[Thinking] {}", t)),
+                )
             }
             _ => (None, None),
         }
@@ -545,7 +553,11 @@ impl ClaudeAdapter {
                         }
                         Some("tool_result") => {
                             // tool_result 显示简短的结果摘要
-                            let error_tag = if block.is_error == Some(true) { " Error" } else { "" };
+                            let error_tag = if block.is_error == Some(true) {
+                                " Error"
+                            } else {
+                                ""
+                            };
                             match &block.content {
                                 Some(serde_json::Value::String(s)) => {
                                     let truncated: String = s.chars().take(50).collect();
@@ -731,7 +743,9 @@ impl ClaudeAdapter {
                     serde_json::to_string(data).unwrap_or_default()
                 } else {
                     // fallback: 从 extra 中提取特有的业务字段
-                    let useful: serde_json::Map<String, serde_json::Value> = entry.extra.iter()
+                    let useful: serde_json::Map<String, serde_json::Value> = entry
+                        .extra
+                        .iter()
                         .filter(|(k, _)| !COMMON_JSONL_KEYS.contains(&k.as_str()))
                         .map(|(k, v)| (k.clone(), v.clone()))
                         .collect();
@@ -1199,9 +1213,20 @@ impl IncrementalAdapter for ClaudeAdapter {
 
 /// JSONL 通用字段（每种消息类型都有），在提取 system 消息元数据时排除这些
 const COMMON_JSONL_KEYS: &[&str] = &[
-    "parentUuid", "isSidechain", "userType", "cwd", "sessionId",
-    "version", "gitBranch", "slug", "timestamp", "uuid", "toolUseID",
-    "type", "subtype", "isMeta",
+    "parentUuid",
+    "isSidechain",
+    "userType",
+    "cwd",
+    "sessionId",
+    "version",
+    "gitBranch",
+    "slug",
+    "timestamp",
+    "uuid",
+    "toolUseID",
+    "type",
+    "subtype",
+    "isMeta",
 ];
 
 /// 提取的内容（包括工具信息）
@@ -1234,11 +1259,11 @@ struct JsonlEntry {
     #[allow(dead_code)]
     is_meta: Option<bool>,
     // 全量采集：支持更多消息类型
-    summary: Option<String>,           // summary 类型的内容
-    data: Option<serde_json::Value>,   // progress/system 等类型的数据
-    subtype: Option<String>,           // system 类型的子类型
+    summary: Option<String>,         // summary 类型的内容
+    data: Option<serde_json::Value>, // progress/system 等类型的数据
+    subtype: Option<String>,         // system 类型的子类型
     #[serde(rename = "customTitle")]
-    custom_title: Option<String>,      // custom-title 类型的内容
+    custom_title: Option<String>, // custom-title 类型的内容
     /// 捕获所有未明确定义的顶层字段（如 durationMs, hookInfos, hookErrors 等）
     #[serde(flatten)]
     extra: serde_json::Map<String, serde_json::Value>,
@@ -1374,11 +1399,21 @@ mod tests {
 
         // Parse the entry directly for testing
         let entry: JsonlEntry = serde_json::from_str(jsonl).unwrap();
-        let msg = adapter.convert_entry(&entry, "test-session", jsonl).unwrap();
+        let msg = adapter
+            .convert_entry(&entry, "test-session", jsonl)
+            .unwrap();
 
         assert_eq!(msg.message_type, MessageType::System);
-        assert!(msg.content.full.contains("turn_duration"), "Should have turn_duration label, got: {}", msg.content.full);
-        assert!(msg.content.full.contains("79808"), "Should contain durationMs value, got: {}", msg.content.full);
+        assert!(
+            msg.content.full.contains("turn_duration"),
+            "Should have turn_duration label, got: {}",
+            msg.content.full
+        );
+        assert!(
+            msg.content.full.contains("79808"),
+            "Should contain durationMs value, got: {}",
+            msg.content.full
+        );
     }
 
     #[test]
@@ -1389,11 +1424,25 @@ mod tests {
 
         // Parse the entry directly for testing
         let entry: JsonlEntry = serde_json::from_str(jsonl).unwrap();
-        let msg = adapter.convert_entry(&entry, "test-session", jsonl).unwrap();
+        let msg = adapter
+            .convert_entry(&entry, "test-session", jsonl)
+            .unwrap();
 
         assert_eq!(msg.message_type, MessageType::System);
-        assert!(msg.content.full.contains("stop_hook_summary"), "Should have stop_hook_summary label, got: {}", msg.content.full);
-        assert!(msg.content.full.contains("hookCount"), "Should contain hookCount, got: {}", msg.content.full);
-        assert!(msg.content.full.contains("hookInfos"), "Should contain hookInfos, got: {}", msg.content.full);
+        assert!(
+            msg.content.full.contains("stop_hook_summary"),
+            "Should have stop_hook_summary label, got: {}",
+            msg.content.full
+        );
+        assert!(
+            msg.content.full.contains("hookCount"),
+            "Should contain hookCount, got: {}",
+            msg.content.full
+        );
+        assert!(
+            msg.content.full.contains("hookInfos"),
+            "Should contain hookInfos, got: {}",
+            msg.content.full
+        );
     }
 }

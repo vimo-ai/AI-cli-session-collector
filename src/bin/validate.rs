@@ -6,7 +6,7 @@ use std::process;
 
 use ai_cli_session_collector::validate::{
     framework::Severity,
-    report::{format_human_report, format_json_report, OutputFormat},
+    report::{OutputFormat, format_human_report, format_json_report},
     run_claude_validation,
 };
 
@@ -74,7 +74,11 @@ fn main() {
     }
 
     // 退出码: 有 Error 级别 finding = 1
-    if result.findings.iter().any(|f| f.severity == Severity::Error) {
+    if result
+        .findings
+        .iter()
+        .any(|f| f.severity == Severity::Error)
+    {
         process::exit(1);
     }
 }

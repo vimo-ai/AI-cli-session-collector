@@ -69,10 +69,7 @@ impl ClaudeValidator {
                 level: Level::L5Project,
                 severity: Severity::Error,
                 rule_id: "L5-PATH-NOT-FOUND".to_string(),
-                message: format!(
-                    "projects 目录不存在: {}",
-                    self.projects_path.display()
-                ),
+                message: format!("projects 目录不存在: {}", self.projects_path.display()),
                 session_id: None,
                 line_number: None,
                 context: None,
@@ -84,12 +81,7 @@ impl ClaudeValidator {
             Ok(entries) => entries
                 .flatten()
                 .filter(|e| e.path().is_dir())
-                .filter(|e| {
-                    !e.file_name()
-                        .to_str()
-                        .unwrap_or_default()
-                        .starts_with('.')
-                })
+                .filter(|e| !e.file_name().to_str().unwrap_or_default().starts_with('.'))
                 .collect::<Vec<_>>(),
             Err(e) => {
                 result.findings.push(Finding {
@@ -130,11 +122,7 @@ impl ClaudeValidator {
             if !path.is_file() {
                 continue;
             }
-            let name = entry
-                .file_name()
-                .to_str()
-                .unwrap_or_default()
-                .to_string();
+            let name = entry.file_name().to_str().unwrap_or_default().to_string();
             if !name.ends_with(".jsonl") {
                 continue;
             }
@@ -173,12 +161,10 @@ impl ClaudeValidator {
 
         // L5 验证
         if self.max_level >= 5 {
-            let index_findings =
-                project::validate_sessions_index(project_dir, &session_ids);
+            let index_findings = project::validate_sessions_index(project_dir, &session_ids);
             result.findings.extend(index_findings);
 
-            let unknown_findings =
-                project::detect_unknown_files(project_dir, &session_ids);
+            let unknown_findings = project::detect_unknown_files(project_dir, &session_ids);
             result.findings.extend(unknown_findings);
         }
     }
@@ -243,9 +229,7 @@ impl ClaudeValidator {
                         message: format!("JSON 解析失败: {}", e),
                         session_id: Some(session_id.to_string()),
                         line_number: Some(line_number),
-                        context: Some(
-                            truncate(&raw_line, 80).to_string(),
-                        ),
+                        context: Some(truncate(&raw_line, 80).to_string()),
                     });
                     continue;
                 }
@@ -281,32 +265,26 @@ impl ClaudeValidator {
                         count: 0,
                         first_session: Some(session_id.to_string()),
                         first_line: Some(line_number),
-                        sample_value: obj
-                            .get(field_name)
-                            .map(|v| {
-                                let s = v.to_string();
-                                if truncate(&s, 60).len() < s.len() {
-                                    format!("{}...", truncate(&s, 60))
-                                } else {
-                                    s
-                                }
-                            }),
+                        sample_value: obj.get(field_name).map(|v| {
+                            let s = v.to_string();
+                            if truncate(&s, 60).len() < s.len() {
+                                format!("{}...", truncate(&s, 60))
+                            } else {
+                                s
+                            }
+                        }),
                     });
                 info.count += 1;
             }
 
             // L0: 类型检查
-            let type_mismatches =
-                schema::check_field_types(obj, schema::CLAUDE_TOP_LEVEL_FIELDS);
+            let type_mismatches = schema::check_field_types(obj, schema::CLAUDE_TOP_LEVEL_FIELDS);
             for (fname, expected, actual) in &type_mismatches {
                 result.findings.push(Finding {
                     level: Level::L0Field,
                     severity: Severity::Error,
                     rule_id: "L0-TYPE-MISMATCH".to_string(),
-                    message: format!(
-                        "字段 \"{}\": 期望 {}, 实际 {}",
-                        fname, expected, actual
-                    ),
+                    message: format!("字段 \"{}\": 期望 {}, 实际 {}", fname, expected, actual),
                     session_id: Some(session_id.to_string()),
                     line_number: Some(line_number),
                     context: None,
@@ -330,8 +308,7 @@ impl ClaudeValidator {
 
             // L0: message 子字段检查
             if let Some(message) = obj.get("message").and_then(|v| v.as_object()) {
-                let msg_unknown =
-                    schema::check_field_whitelist(message, schema::MESSAGE_FIELDS);
+                let msg_unknown = schema::check_field_whitelist(message, schema::MESSAGE_FIELDS);
                 for field_name in &msg_unknown {
                     let key = format!("message.{}", field_name);
                     let info = result
@@ -342,26 +319,21 @@ impl ClaudeValidator {
                             count: 0,
                             first_session: Some(session_id.to_string()),
                             first_line: Some(line_number),
-                            sample_value: message
-                                .get(field_name)
-                                .map(|v| {
-                                    let s = v.to_string();
-                                    if truncate(&s, 60).len() < s.len() {
-                                        format!("{}...", truncate(&s, 60))
-                                    } else {
-                                        s
-                                    }
-                                }),
+                            sample_value: message.get(field_name).map(|v| {
+                                let s = v.to_string();
+                                if truncate(&s, 60).len() < s.len() {
+                                    format!("{}...", truncate(&s, 60))
+                                } else {
+                                    s
+                                }
+                            }),
                         });
                     info.count += 1;
                 }
 
                 // L0: content block 检查
-                let block_findings = line::validate_message_content_blocks(
-                    line_number,
-                    message,
-                    session_id,
-                );
+                let block_findings =
+                    line::validate_message_content_blocks(line_number, message, session_id);
                 result.findings.extend(block_findings);
             }
 
@@ -384,8 +356,7 @@ impl ClaudeValidator {
 
             // L1: 按 type 的字段组合检查
             if self.max_level >= 1 {
-                let l1_findings =
-                    line::validate_line(line_number, &entry_type, obj, session_id);
+                let l1_findings = line::validate_line(line_number, &entry_type, obj, session_id);
                 result.findings.extend(l1_findings);
             }
 

@@ -116,11 +116,17 @@ impl ValidationResult {
     }
 
     pub fn error_count(&self) -> usize {
-        self.findings.iter().filter(|f| f.severity == Severity::Error).count()
+        self.findings
+            .iter()
+            .filter(|f| f.severity == Severity::Error)
+            .count()
     }
 
     pub fn warning_count(&self) -> usize {
-        self.findings.iter().filter(|f| f.severity == Severity::Warning).count()
+        self.findings
+            .iter()
+            .filter(|f| f.severity == Severity::Warning)
+            .count()
     }
 
     pub fn merge(&mut self, other: ValidationResult) {

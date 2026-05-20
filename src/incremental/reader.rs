@@ -44,8 +44,8 @@ impl JsonlIncrementalReader {
 
     /// 获取文件标识
     fn get_file_identity(path: &Path) -> Result<FileIdentity> {
-        let metadata = std::fs::metadata(path)
-            .with_context(|| format!("无法获取文件元数据: {:?}", path))?;
+        let metadata =
+            std::fs::metadata(path).with_context(|| format!("无法获取文件元数据: {:?}", path))?;
 
         // Unix: 使用 inode 检测文件替换
         // Windows: file_index 是 unstable feature，用 0 代替（放弃文件替换检测，但文件截断检测仍有效）

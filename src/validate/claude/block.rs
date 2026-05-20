@@ -31,10 +31,7 @@ pub fn group_by_request_id(lines: &[ValidatedLine]) -> Vec<RequestGroup> {
 }
 
 /// L2 验证：检查 requestId 分组内的结构
-pub fn validate_request_groups(
-    groups: &[RequestGroup],
-    session_id: &str,
-) -> Vec<Finding> {
+pub fn validate_request_groups(groups: &[RequestGroup], session_id: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     for group in groups {

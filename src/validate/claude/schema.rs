@@ -106,7 +106,7 @@ pub const CLAUDE_TOP_LEVEL_FIELDS: &[FieldDescriptor] = &[
         name: "stopReason",
         json_type: JsonType::String,
         presence: FieldPresence::Optional,
-        value_domain: Some(ValueDomain::Enum(&[""])),  // 始终为空字符串
+        value_domain: Some(ValueDomain::Enum(&[""])), // 始终为空字符串
     },
     FieldDescriptor {
         name: "durationMs",
@@ -305,7 +305,9 @@ pub const CLAUDE_TOP_LEVEL_FIELDS: &[FieldDescriptor] = &[
         name: "operation",
         json_type: JsonType::String,
         presence: FieldPresence::Conditional,
-        value_domain: Some(ValueDomain::Enum(&["enqueue", "dequeue", "remove", "popAll"])),
+        value_domain: Some(ValueDomain::Enum(&[
+            "enqueue", "dequeue", "remove", "popAll",
+        ])),
     },
     // --- user 输入附加 ---
     FieldDescriptor {
@@ -394,7 +396,7 @@ pub const MESSAGE_FIELDS: &[FieldDescriptor] = &[
         name: "stop_reason",
         json_type: JsonType::String,
         presence: FieldPresence::Optional,
-        value_domain: Some(ValueDomain::Enum(&[])),  // 始终 null，非 null 字符串触发 L0 告警
+        value_domain: Some(ValueDomain::Enum(&[])), // 始终 null，非 null 字符串触发 L0 告警
     },
     FieldDescriptor {
         name: "stop_sequence",
@@ -584,8 +586,7 @@ pub fn check_field_whitelist(
     obj: &serde_json::Map<String, serde_json::Value>,
     whitelist: &[FieldDescriptor],
 ) -> Vec<String> {
-    let known: std::collections::HashSet<&str> =
-        whitelist.iter().map(|f| f.name).collect();
+    let known: std::collections::HashSet<&str> = whitelist.iter().map(|f| f.name).collect();
     obj.keys()
         .filter(|k| !known.contains(k.as_str()))
         .cloned()

@@ -98,11 +98,7 @@ fn is_user_text_line(line: &ValidatedLine) -> bool {
     }
 
     // message.content 是 string → user text
-    if let Some(content) = line
-        .value
-        .get("message")
-        .and_then(|m| m.get("content"))
-    {
+    if let Some(content) = line.value.get("message").and_then(|m| m.get("content")) {
         return content.is_string();
     }
 
@@ -148,7 +144,9 @@ pub fn validate_turns(turns: &[Turn], session_id: &str) -> Vec<Finding> {
                     .and_then(|m| m.get("content"))
                     .and_then(|c| c.as_array())
                     .map(|blocks| {
-                        blocks.iter().any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_use"))
+                        blocks
+                            .iter()
+                            .any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_use"))
                     })
                     .unwrap_or(false);
 
@@ -170,12 +168,10 @@ pub fn validate_turns(turns: &[Turn], session_id: &str) -> Vec<Finding> {
         }
 
         // system 行检查：turn_duration 通常在 Turn 末尾
-        let has_turn_duration = turn.system_lines.iter().any(|l| {
-            l.value
-                .get("subtype")
-                .and_then(|v| v.as_str())
-                == Some("turn_duration")
-        });
+        let has_turn_duration = turn
+            .system_lines
+            .iter()
+            .any(|l| l.value.get("subtype").and_then(|v| v.as_str()) == Some("turn_duration"));
 
         if !has_turn_duration && !turn.request_groups.is_empty() {
             // 不是所有 Turn 都有 turn_duration（早期版本可能没有）

@@ -7,9 +7,7 @@ use std::path::Path;
 use super::super::framework::truncate;
 
 /// 构建 parentUuid 树，返回 (children_map, root_uuids)
-pub fn build_uuid_tree(
-    lines: &[ValidatedLine],
-) -> (HashMap<String, Vec<String>>, Vec<String>) {
+pub fn build_uuid_tree(lines: &[ValidatedLine]) -> (HashMap<String, Vec<String>>, Vec<String>) {
     let mut children: HashMap<String, Vec<String>> = HashMap::new();
     let mut all_uuids: HashSet<String> = HashSet::new();
     let mut has_parent: HashSet<String> = HashSet::new();
@@ -27,10 +25,7 @@ pub fn build_uuid_tree(
         }
     }
 
-    let roots: Vec<String> = all_uuids
-        .difference(&has_parent)
-        .cloned()
-        .collect();
+    let roots: Vec<String> = all_uuids.difference(&has_parent).cloned().collect();
 
     (children, roots)
 }
@@ -50,10 +45,7 @@ pub fn detect_forks(lines: &[ValidatedLine]) -> Vec<(String, usize)> {
 }
 
 /// 验证 compaction 链
-pub fn validate_compaction_chains(
-    lines: &[ValidatedLine],
-    session_id: &str,
-) -> Vec<Finding> {
+pub fn validate_compaction_chains(lines: &[ValidatedLine], session_id: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
     let mut i = 0;
 
@@ -131,10 +123,7 @@ pub fn validate_compaction_chains(
 }
 
 /// 验证 subagent 目录
-pub fn validate_subagent_dirs(
-    session_dir: &Path,
-    session_id: &str,
-) -> Vec<Finding> {
+pub fn validate_subagent_dirs(session_dir: &Path, session_id: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     let subagents_dir = session_dir.join("subagents");
@@ -200,10 +189,7 @@ pub fn validate_subagent_dirs(
                             level: Level::L4Session,
                             severity: Severity::Warning,
                             rule_id: "L4-SUBAGENT-NOT-SIDECHAIN".to_string(),
-                            message: format!(
-                                "subagent {} 的 isSidechain 不为 true",
-                                filename
-                            ),
+                            message: format!("subagent {} 的 isSidechain 不为 true", filename),
                             session_id: Some(session_id.to_string()),
                             line_number: None,
                             context: None,

@@ -3,8 +3,8 @@
 //! 在 JSONL 入库前，将 image content block 中的 base64 图片压缩为 WebP 格式。
 //! 压缩后更小才替换，任何失败都保留原始数据。
 
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use std::io::Cursor;
 
 /// lossy WebP 编码质量（0-100）
@@ -316,11 +316,11 @@ mod tests {
 
         // 其他字段完整保留
         assert_eq!(json["uuid"].as_str().unwrap(), "abc-123");
+        assert_eq!(json["timestamp"].as_str().unwrap(), "2026-01-01T00:00:00Z");
         assert_eq!(
-            json["timestamp"].as_str().unwrap(),
-            "2026-01-01T00:00:00Z"
+            json["message"]["content"][0]["text"].as_str().unwrap(),
+            "hello"
         );
-        assert_eq!(json["message"]["content"][0]["text"].as_str().unwrap(), "hello");
     }
 
     #[test]

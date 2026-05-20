@@ -337,7 +337,11 @@ impl GeminiAdapter {
                     text: content_text,          // 纯文本用于向量化
                     full: full_parts.join("\n"), // 完整内容用于 FTS
                 },
-                timestamp: entry.timestamp.as_deref().and_then(parse_iso_timestamp).map(|ms| ms.to_string()),
+                timestamp: entry
+                    .timestamp
+                    .as_deref()
+                    .and_then(parse_iso_timestamp)
+                    .map(|ms| ms.to_string()),
                 source: Source::Gemini,
                 channel: Some("cli".to_string()),
                 model: entry.model.clone(),

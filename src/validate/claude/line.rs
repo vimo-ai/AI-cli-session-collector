@@ -196,12 +196,9 @@ pub fn validate_message_content_blocks(
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
 
-        if let Some(whitelist) =
-            super::schema::block_whitelist_for_type(block_type)
-        {
+        if let Some(whitelist) = super::schema::block_whitelist_for_type(block_type) {
             // 检查未知字段
-            let unknown =
-                super::schema::check_field_whitelist(block_obj, whitelist);
+            let unknown = super::schema::check_field_whitelist(block_obj, whitelist);
             for field_name in &unknown {
                 findings.push(Finding {
                     level: Level::L0Field,
@@ -213,27 +210,21 @@ pub fn validate_message_content_blocks(
                     ),
                     session_id: Some(session_id.to_string()),
                     line_number: Some(line_number),
-                    context: block_obj
-                        .get(field_name)
-                        .map(|v| {
-                            let s = v.to_string();
-                            truncate_with_ellipsis(&s, 60)
-                        }),
+                    context: block_obj.get(field_name).map(|v| {
+                        let s = v.to_string();
+                        truncate_with_ellipsis(&s, 60)
+                    }),
                 });
             }
 
             // 检查类型
-            let mismatches =
-                super::schema::check_field_types(block_obj, whitelist);
+            let mismatches = super::schema::check_field_types(block_obj, whitelist);
             for (fname, expected, actual) in &mismatches {
                 findings.push(Finding {
                     level: Level::L0Field,
                     severity: Severity::Error,
                     rule_id: "L0-BLOCK-TYPE-MISMATCH".to_string(),
-                    message: format!(
-                        "block[{}].{}: 期望 {}, 实际 {}",
-                        i, fname, expected, actual
-                    ),
+                    message: format!("block[{}].{}: 期望 {}, 实际 {}", i, fname, expected, actual),
                     session_id: Some(session_id.to_string()),
                     line_number: Some(line_number),
                     context: None,

@@ -380,9 +380,10 @@ impl CodexAdapter {
 
             let event_type = event.event_type.as_deref();
             // 将 ISO 8601 时间戳转换为毫秒字符串
-            let timestamp = event.timestamp.as_deref().and_then(|s| {
-                Self::parse_iso_timestamp(s).map(|ms| ms.to_string())
-            });
+            let timestamp = event
+                .timestamp
+                .as_deref()
+                .and_then(|s| Self::parse_iso_timestamp(s).map(|ms| ms.to_string()));
 
             // 更新时间戳
             if first_timestamp.is_none() {

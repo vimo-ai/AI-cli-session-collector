@@ -88,20 +88,15 @@ pub fn validate_sessions_index(
             // 验证 entry 字段
             for entry in entries {
                 if let Some(entry_obj) = entry.as_object() {
-                    let known: HashSet<&str> = super::schema::INDEX_ENTRY_FIELDS
-                        .iter()
-                        .copied()
-                        .collect();
+                    let known: HashSet<&str> =
+                        super::schema::INDEX_ENTRY_FIELDS.iter().copied().collect();
                     for key in entry_obj.keys() {
                         if !known.contains(key.as_str()) {
                             findings.push(Finding {
                                 level: Level::L5Project,
                                 severity: Severity::Warning,
                                 rule_id: "L5-INDEX-ENTRY-UNKNOWN-FIELD".to_string(),
-                                message: format!(
-                                    "sessions-index entry 未知字段: {}",
-                                    key
-                                ),
+                                message: format!("sessions-index entry 未知字段: {}", key),
                                 session_id: entry_obj
                                     .get("sessionId")
                                     .and_then(|v| v.as_str())
@@ -116,7 +111,11 @@ pub fn validate_sessions_index(
 
             entries
                 .iter()
-                .filter_map(|e| e.get("sessionId").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                .filter_map(|e| {
+                    e.get("sessionId")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -154,10 +153,7 @@ pub fn validate_sessions_index(
             level: Level::L5Project,
             severity: Severity::Warning,
             rule_id: "L5-INDEX-MISSING".to_string(),
-            message: format!(
-                "磁盘有 {} 个 session 不在 index 中",
-                disk_only.len()
-            ),
+            message: format!("磁盘有 {} 个 session 不在 index 中", disk_only.len()),
             session_id: None,
             line_number: None,
             context: Some(
@@ -191,11 +187,7 @@ pub fn detect_unknown_files(project_dir: &Path, session_ids: &[String]) -> Vec<F
 
     for entry in entries.flatten() {
         let path = entry.path();
-        let name = entry
-            .file_name()
-            .to_str()
-            .unwrap_or_default()
-            .to_string();
+        let name = entry.file_name().to_str().unwrap_or_default().to_string();
 
         if name.starts_with('.') {
             continue; // 隐藏文件跳过
@@ -238,8 +230,10 @@ pub fn detect_unknown_files(project_dir: &Path, session_ids: &[String]) -> Vec<F
                     Ok(e) => e,
                     Err(_) => continue,
                 };
-                let allowed_subdirs: HashSet<&str> =
-                    super::schema::ALLOWED_SESSION_SUBDIRS.iter().copied().collect();
+                let allowed_subdirs: HashSet<&str> = super::schema::ALLOWED_SESSION_SUBDIRS
+                    .iter()
+                    .copied()
+                    .collect();
                 for sub_entry in sub_entries.flatten() {
                     if sub_entry.path().is_dir() {
                         let sub_name = sub_entry
@@ -318,10 +312,7 @@ pub fn validate_tool_results(
             level: Level::L5Project,
             severity: Severity::Info,
             rule_id: "L5-TOOL-RESULT-ORPHAN".to_string(),
-            message: format!(
-                "{} 个 tool-result 文件在 JSONL 中未被引用",
-                orphan.len()
-            ),
+            message: format!("{} 个 tool-result 文件在 JSONL 中未被引用", orphan.len()),
             session_id: Some(session_id.to_string()),
             line_number: None,
             context: Some(
@@ -342,10 +333,7 @@ pub fn validate_tool_results(
             level: Level::L5Project,
             severity: Severity::Warning,
             rule_id: "L5-TOOL-RESULT-MISSING".to_string(),
-            message: format!(
-                "{} 个 tool-result 文件被 JSONL 引用但不存在",
-                missing.len()
-            ),
+            message: format!("{} 个 tool-result 文件被 JSONL 引用但不存在", missing.len()),
             session_id: Some(session_id.to_string()),
             line_number: None,
             context: Some(

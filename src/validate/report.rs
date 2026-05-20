@@ -41,17 +41,23 @@ pub fn format_human_report(result: &ValidationResult, verbose: bool) -> String {
 
     for level in &levels {
         let findings = by_level.get(level).map(|v| v.as_slice()).unwrap_or(&[]);
-        let errors: Vec<_> = findings.iter().filter(|f| f.severity == Severity::Error).collect();
-        let warnings: Vec<_> = findings.iter().filter(|f| f.severity == Severity::Warning).collect();
-        let infos: Vec<_> = findings.iter().filter(|f| f.severity == Severity::Info).collect();
+        let errors: Vec<_> = findings
+            .iter()
+            .filter(|f| f.severity == Severity::Error)
+            .collect();
+        let warnings: Vec<_> = findings
+            .iter()
+            .filter(|f| f.severity == Severity::Warning)
+            .collect();
+        let infos: Vec<_> = findings
+            .iter()
+            .filter(|f| f.severity == Severity::Info)
+            .collect();
 
         // Level header with stats
         match level {
             Level::L0Field => {
-                out.push_str(&format!(
-                    "{:<12} ",
-                    level.to_string()
-                ));
+                out.push_str(&format!("{:<12} ", level.to_string()));
                 if errors.is_empty() && warnings.is_empty() {
                     out.push_str(&format!(
                         "\x1b[32m✓\x1b[0m {} 行, {} 种已知字段\n",
@@ -84,10 +90,7 @@ pub fn format_human_report(result: &ValidationResult, verbose: bool) -> String {
                         stats.type_counts.len()
                     ));
                 } else {
-                    out.push_str(&format!(
-                        "\x1b[31m✗\x1b[0m {} 个错误\n",
-                        errors.len()
-                    ));
+                    out.push_str(&format!("\x1b[31m✗\x1b[0m {} 个错误\n", errors.len()));
                 }
             }
             Level::L2Block => {
@@ -108,10 +111,7 @@ pub fn format_human_report(result: &ValidationResult, verbose: bool) -> String {
             Level::L3Turn => {
                 out.push_str(&format!("{:<12} ", level.to_string()));
                 if errors.is_empty() {
-                    out.push_str(&format!(
-                        "\x1b[32m✓\x1b[0m {} 个 Turn\n",
-                        stats.turn_count
-                    ));
+                    out.push_str(&format!("\x1b[32m✓\x1b[0m {} 个 Turn\n", stats.turn_count));
                 } else {
                     out.push_str(&format!(
                         "\x1b[31m✗\x1b[0m {} 个错误 ({} 个 Turn)\n",
@@ -134,10 +134,7 @@ pub fn format_human_report(result: &ValidationResult, verbose: bool) -> String {
                         stats.fork_count, stats.compaction_count
                     ));
                 } else {
-                    out.push_str(&format!(
-                        "\x1b[31m✗\x1b[0m {} 个错误\n",
-                        errors.len()
-                    ));
+                    out.push_str(&format!("\x1b[31m✗\x1b[0m {} 个错误\n", errors.len()));
                 }
             }
             Level::L5Project => {
